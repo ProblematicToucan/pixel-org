@@ -22,11 +22,12 @@ export const agents = sqliteTable("agents", {
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 
-/** Project (like Slack channel / repo). Has many threads. */
+/** Project (like Slack channel / repo). Has many threads. Goals = user-defined objectives (Option B). */
 export const projects = sqliteTable("projects", {
   id: uuid(),
   name: text("name").notNull(),
   slug: text("slug").notNull(),
+  goals: text("goals"),
   createdAt: text("created_at").default("CURRENT_TIMESTAMP").notNull(),
 });
 

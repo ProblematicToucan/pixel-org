@@ -57,6 +57,25 @@ app.get("/projects", async (_req, res) => {
   }
 });
 
+app.get("/projects/:id", async (req, res) => {
+  try {
+    const id = req.params.id?.trim();
+    if (!id) {
+      res.status(400).json({ error: "Invalid project id" });
+      return;
+    }
+    const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    if (rows.length === 0) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch project" });
+  }
+});
+
 app.post("/projects", async (req, res) => {
   try {
     const { name, slug } = req.body;
@@ -69,6 +88,30 @@ app.post("/projects", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create project" });
+  }
+});
+
+app.patch("/projects/:id", async (req, res) => {
+  try {
+    const id = req.params.id?.trim();
+    const { name, slug, goals } = req.body;
+    if (!id) {
+      res.status(400).json({ error: "Invalid project id" });
+      return;
+    }
+    const updates: { name?: string; slug?: string; goals?: string | null } = {};
+    if (typeof name === "string") updates.name = name.trim();
+    if (typeof slug === "string") updates.slug = slug.trim();
+    if (goals !== undefined) updates.goals = goals === null || goals === "" ? null : String(goals).trim();
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: "No valid fields to update" });
+      return;
+    }
+    await db.update(projects).set(updates).where(eq(projects.id, id));
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update project" });
   }
 });
 

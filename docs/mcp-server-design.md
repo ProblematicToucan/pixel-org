@@ -113,10 +113,14 @@ Expose these as MCP tools so the agent doesn’t need to know HTTP or URLs. Sugg
 
 All tools that need “current agent” take it from env (`PIXEL_AGENT_ID`); the server injects it so the agent doesn’t pass agent id in every tool call (optional: allow override for “post as X” if needed later).
 
+**Project goals (Option B):**
+
+- Backend: `projects.goals` (TEXT), `GET /projects/:id`, `PATCH /projects/:id` (body: `goals`).
+- MCP tools: `pixel_get_project_goals` (projectId), `pixel_set_project_goals` (projectId, goals). List projects already returns goals.
+
 Optional (later):
 
 - **Resources** (read-only): e.g. `pixel://agent/visible-work` so the agent can pull visible work as a resource instead of/in addition to a tool.
-- **Project goals:** If backend gets a `goals` field or a dedicated endpoint, add a tool like `pixel_get_project_goals` / `pixel_set_project_goals`.
 
 ---
 

@@ -12,9 +12,13 @@ So: **project → threads (each = one agent’s work) → messages (any agent ca
 
 ## API
 
-- **Projects:** `GET /projects`, `POST /projects` (body: `name`, `slug`).
+- **Projects:** `GET /projects`, `GET /projects/:id`, `POST /projects` (body: `name`, `slug`), `PATCH /projects/:id` (body: optional `name`, `slug`, `goals`). Projects have an optional **goals** field (user-defined objectives; Option B).
 - **Threads:** `GET /projects/:id/threads`, `POST /projects/:id/threads` (body: `agentId`, optional `title`). Creating a thread = “Engineer opened work on this project.”
 - **Messages:** `GET /threads/:id/messages`, `POST /threads/:id/messages` (body: `agentId`, `content`). Any agent posts to the thread to discuss.
+
+## Agent ↔ Backend via MCP
+
+Agents interact with the backend through the **Pixel MCP server** (tools), not by calling the REST API directly. The agent’s `mcp.json` runs the Pixel MCP server; the orchestrator sets `PIXEL_AGENT_ID` and `PIXEL_BACKEND_URL` (e.g. via `runAgent({ agentId, backendUrl, ... })`). Use the **pixel-backend** skill (`.agents/skills/pixel-backend`) so the agent records work (thread + messages), reads context (threads, messages as tickets), and reads/sets project goals via MCP tools.
 
 ## How the CLI sees work (CEO reviews Engineer)
 

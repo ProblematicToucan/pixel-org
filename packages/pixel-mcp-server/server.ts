@@ -94,6 +94,63 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "pixel_get_project_goals",
+    {
+      description:
+        "Get the goals for a project (user-defined objectives). Use to read what the user wants for this project.",
+      inputSchema: z.object({
+        projectId: z.string().describe("Project UUID"),
+      }),
+    },
+    async (args: { projectId?: string }): Promise<CallToolResult> => {
+      const projectId = args?.projectId ?? "";
+      if (!projectId) {
+        return {
+          content: [{ type: "text", text: "Error: projectId is required" }],
+          isError: true,
+        };
+      }
+      try {
+        const project = await backend.getProject(projectId);
+        const text = project.goals ?? "(no goals set)";
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_set_project_goals",
+    {
+      description:
+        "Set or update the goals for a project (user-defined objectives). Use when the user or you define project goals.",
+      inputSchema: z.object({
+        projectId: z.string().describe("Project UUID"),
+        goals: z.string().describe("Goals text (objectives for this project)"),
+      }),
+    },
+    async (args: { projectId?: string; goals?: string }): Promise<CallToolResult> => {
+      const projectId = args?.projectId ?? "";
+      const goals = args?.goals ?? "";
+      if (!projectId) {
+        return {
+          content: [{ type: "text", text: "Error: projectId is required" }],
+          isError: true,
+        };
+      }
+      try {
+        await backend.updateProjectGoals(projectId, goals.trim() || null);
+        return { content: [{ type: "text", text: "Project goals updated." }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
     "pixel_list_threads",
     {
       description: "List threads in a project.",
@@ -231,6 +288,7 @@ export function createServer(): McpServer {
           id: string;
           name: string;
           slug: string;
+          goals?: string | null;
           threads?: {
             id: string;
             agentId: string;
@@ -260,6 +318,7 @@ export function createServer(): McpServer {
             id: p.id,
             name: p.name,
             slug: p.slug,
+            goals: p.goals ?? null,
             threads: threadsWithMessages,
           });
         }

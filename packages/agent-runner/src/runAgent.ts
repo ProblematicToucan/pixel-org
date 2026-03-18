@@ -3,14 +3,17 @@ import type { RunAgentOptions, RunAgentResult } from "./types.js";
 
 const ROLE_ENV_KEY = "PIXEL_AGENT_ROLE";
 const VISIBLE_WORK_ENV_KEY = "PIXEL_VISIBLE_WORK";
+const AGENT_ID_ENV_KEY = "PIXEL_AGENT_ID";
+const BACKEND_URL_ENV_KEY = "PIXEL_BACKEND_URL";
 
 /**
  * Invokes the configured agent CLI with the given role and task.
  * Caller (orchestrator) is responsible for choosing provider, role, and task.
  * If visibleWork is provided (e.g. from GET /agents/:id/visible-work), the CLI can read those artifact paths to review report work.
+ * If agentId/backendUrl are provided, the Pixel MCP server (in agent's mcp.json) can use them to talk to the backend.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
-  const { provider, role, task, cwd = process.cwd(), timeoutMs, visibleWork, env = {} } = options;
+  const { provider, role, task, cwd = process.cwd(), timeoutMs, visibleWork, agentId, backendUrl, env = {} } = options;
 
   const baseEnv: Record<string, string> = {
     ...process.env,
@@ -19,6 +22,12 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   };
   if (visibleWork != null && visibleWork.length > 0) {
     baseEnv[VISIBLE_WORK_ENV_KEY] = JSON.stringify(visibleWork);
+  }
+  if (agentId != null && agentId !== "") {
+    baseEnv[AGENT_ID_ENV_KEY] = agentId;
+  }
+  if (backendUrl != null && backendUrl !== "") {
+    baseEnv[BACKEND_URL_ENV_KEY] = backendUrl.replace(/\/$/, "");
   }
 
   const canReadOutsideWorkspace = visibleWork != null && visibleWork.length > 0;
