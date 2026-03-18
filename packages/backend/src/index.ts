@@ -7,6 +7,7 @@ const rootDir = path.resolve(__dirname, "..", "..", "..");
 dotenv.config({ path: path.join(rootDir, ".env") });
 
 import express from "express";
+import cors from "cors";
 import { db, agents, projects, threads, messages } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
 import { eq } from "drizzle-orm";
@@ -14,6 +15,7 @@ import { eq } from "drizzle-orm";
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
+app.use(cors());
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
