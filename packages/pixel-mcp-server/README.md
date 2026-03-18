@@ -20,7 +20,17 @@ Set these in the agent’s `mcp.json` or before starting the server.
 | `pixel_create_thread` | Create a thread (`projectId`, optional `title`). |
 | `pixel_list_messages` | List messages in a thread (`threadId`). |
 | `pixel_post_message` | Post a message (`threadId`, `content`). |
+| `pixel_get_project_goals` | Get goals for a project (`projectId`). |
+| `pixel_set_project_goals` | Set or update project goals (`projectId`, `goals`). |
 | `pixel_show_context` | **MCP App**: open interactive view of projects, threads, and messages. |
+
+## Skills (shipped with this package)
+
+The **pixel-backend** skill lives in this package so it ships with the app:
+
+- **Path:** `packages/pixel-mcp-server/skills/pixel-backend/SKILL.md`
+
+Use it by copying this `skills/` directory into each agent’s skills location (e.g. `agents/{id}-role/skills/`) when provisioning, or by pointing your agent CLI at this path. The skill tells the agent how to use the Pixel MCP tools to record work, read context (threads, messages, goals), and stay auditable.
 
 ## Running
 
@@ -66,4 +76,4 @@ pnpm run dev
 
 ## MCP App (Pixel Context)
 
-The `pixel_show_context` tool is an MCP App: when the host supports it, it opens an HTML view that shows projects, threads, and messages. The view has a **Refresh** button to reload data. Built with `vite` + `vite-plugin-singlefile`; see [create-mcp-app](.agents/skills/create-mcp-app/SKILL.md) for the pattern.
+The `pixel_show_context` tool is an MCP App: when the host supports it, it opens an HTML view that shows projects, threads, and messages. The view has a **Refresh** button to reload data. Built with `vite` + `vite-plugin-singlefile`; see the create-mcp-app skill for the pattern.
