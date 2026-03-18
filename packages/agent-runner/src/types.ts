@@ -6,7 +6,7 @@ export interface VisibleProject {
 
 /** One agent's visible work (self or report). CLI can read files under each project's artifactsPath. */
 export interface VisibleAgentWork {
-  agentId: number;
+  agentId: string;
   name: string;
   role: string;
   agentDir: string;

@@ -7,7 +7,7 @@ const rootDir = path.resolve(__dirname, "..", "..", "..");
 dotenv.config({ path: path.join(rootDir, ".env") });
 
 import express from "express";
-import { db, agents, reviews } from "./db/index.js";
+import { db, agents, projects, threads, messages } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
 import { eq } from "drizzle-orm";
 
@@ -33,8 +33,8 @@ app.get("/agents", async (_req, res) => {
 /** Work this agent can see: self + all reports (CEO sees everyone, CTO sees Engineers, etc.). */
 app.get("/agents/:id/visible-work", async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) {
+    const id = req.params.id?.trim();
+    if (!id) {
       res.status(400).json({ error: "Invalid agent id" });
       return;
     }
@@ -46,53 +46,101 @@ app.get("/agents/:id/visible-work", async (req, res) => {
   }
 });
 
-/** Create a review (lead judging a report’s work). */
-app.post("/reviews", async (req, res) => {
+// --- Projects (like Slack channels) ---
+app.get("/projects", async (_req, res) => {
   try {
-    const { reviewerAgentId, subjectAgentId, projectId, status = "pending", comment } = req.body;
-    if (
-      reviewerAgentId == null ||
-      subjectAgentId == null ||
-      projectId == null ||
-      typeof projectId !== "string"
-    ) {
-      res.status(400).json({ error: "reviewerAgentId, subjectAgentId, projectId required" });
-      return;
-    }
-    await db.insert(reviews).values({
-      reviewerAgentId: Number(reviewerAgentId),
-      subjectAgentId: Number(subjectAgentId),
-      projectId: String(projectId).trim(),
-      status: ["pending", "approved", "rejected"].includes(status) ? status : "pending",
-      comment: comment != null ? String(comment) : null,
-    });
-    res.status(201).json({
-      success: true,
-      reviewerAgentId: Number(reviewerAgentId),
-      subjectAgentId: Number(subjectAgentId),
-      projectId: String(projectId).trim(),
-      status: ["pending", "approved", "rejected"].includes(status) ? status : "pending",
-      comment: comment != null ? String(comment) : null,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to create review" });
-  }
-});
-
-/** Reviews received for this agent’s work (so Engineer can see CTO’s feedback). */
-app.get("/agents/:id/reviews", async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) {
-      res.status(400).json({ error: "Invalid agent id" });
-      return;
-    }
-    const rows = await db.select().from(reviews).where(eq(reviews.subjectAgentId, id));
+    const rows = await db.select().from(projects);
     res.json(rows);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch reviews" });
+    res.status(500).json({ error: "Failed to fetch projects" });
+  }
+});
+
+app.post("/projects", async (req, res) => {
+  try {
+    const { name, slug } = req.body;
+    if (!name || !slug || typeof name !== "string" || typeof slug !== "string") {
+      res.status(400).json({ error: "name and slug required" });
+      return;
+    }
+    await db.insert(projects).values({ name: name.trim(), slug: slug.trim() });
+    res.status(201).json({ success: true, name: name.trim(), slug: slug.trim() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create project" });
+  }
+});
+
+// --- Threads (work in a project; one agent owns, anyone can discuss) ---
+app.get("/projects/:id/threads", async (req, res) => {
+  try {
+    const projectId = req.params.id?.trim();
+    if (!projectId) {
+      res.status(400).json({ error: "Invalid project id" });
+      return;
+    }
+    const rows = await db.select().from(threads).where(eq(threads.projectId, projectId));
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch threads" });
+  }
+});
+
+app.post("/projects/:id/threads", async (req, res) => {
+  try {
+    const projectId = req.params.id?.trim();
+    const { agentId, title } = req.body;
+    if (!projectId || agentId == null) {
+      res.status(400).json({ error: "project id and agentId required" });
+      return;
+    }
+    await db.insert(threads).values({
+      projectId,
+      agentId: String(agentId).trim(),
+      title: title != null ? String(title).trim() : null,
+    });
+    res.status(201).json({ success: true, projectId, agentId: String(agentId).trim() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create thread" });
+  }
+});
+
+// --- Messages (replies in a thread; any agent can post) ---
+app.get("/threads/:id/messages", async (req, res) => {
+  try {
+    const threadId = req.params.id?.trim();
+    if (!threadId) {
+      res.status(400).json({ error: "Invalid thread id" });
+      return;
+    }
+    const rows = await db.select().from(messages).where(eq(messages.threadId, threadId));
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+app.post("/threads/:id/messages", async (req, res) => {
+  try {
+    const threadId = req.params.id?.trim();
+    const { agentId, content } = req.body;
+    if (!threadId || agentId == null || content == null) {
+      res.status(400).json({ error: "thread id, agentId, and content required" });
+      return;
+    }
+    await db.insert(messages).values({
+      threadId,
+      agentId: String(agentId).trim(),
+      content: String(content).trim(),
+    });
+    res.status(201).json({ success: true, threadId, agentId: String(agentId).trim() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to post message" });
   }
 });
 
