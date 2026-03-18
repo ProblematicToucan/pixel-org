@@ -2,19 +2,24 @@ import { spawn } from "node:child_process";
 import type { RunAgentOptions, RunAgentResult } from "./types.js";
 
 const ROLE_ENV_KEY = "PIXEL_AGENT_ROLE";
+const VISIBLE_WORK_ENV_KEY = "PIXEL_VISIBLE_WORK";
 
 /**
  * Invokes the configured agent CLI with the given role and task.
  * Caller (orchestrator) is responsible for choosing provider, role, and task.
+ * If visibleWork is provided (e.g. from GET /agents/:id/visible-work), the CLI can read those artifact paths to review report work.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
-  const { provider, role, task, cwd = process.cwd(), timeoutMs, env = {} } = options;
+  const { provider, role, task, cwd = process.cwd(), timeoutMs, visibleWork, env = {} } = options;
 
-  const baseEnv = {
+  const baseEnv: Record<string, string> = {
     ...process.env,
     [ROLE_ENV_KEY]: role,
     ...env,
   };
+  if (visibleWork != null && visibleWork.length > 0) {
+    baseEnv[VISIBLE_WORK_ENV_KEY] = JSON.stringify(visibleWork);
+  }
 
   const { command, args } = getCliInvocation(provider, task);
 

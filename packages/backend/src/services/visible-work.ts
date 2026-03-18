@@ -1,0 +1,79 @@
+import fs from "fs";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { agents } from "../db/schema.js";
+import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
+
+type Db = BetterSQLite3Database<{ agents: typeof agents }>;
+
+/** All agents that are self or descendants (reports) of the given agent. */
+export async function getDescendantAgents(
+  db: Db,
+  agentId: number
+): Promise<{ id: number; name: string; role: string }[]> {
+  const all = await db.select().from(agents);
+  const byId = new Map(all.map((a) => [a.id, a]));
+  const result: { id: number; name: string; role: string }[] = [];
+  const queue = [agentId];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const agent = byId.get(id);
+    if (!agent) continue;
+    result.push({ id: agent.id, name: agent.name, role: agent.role });
+    const reports = all.filter((a) => a.parentId === id);
+    queue.push(...reports.map((a) => a.id));
+  }
+
+  return result;
+}
+
+/** List project ids for an agent by reading their dir on disk (subdirs other than skills). */
+function listProjectIdsForAgent(agent: { id: number; role: string }): string[] {
+  const agentDir = getAgentDir(agent);
+  if (!fs.existsSync(agentDir) || !fs.statSync(agentDir).isDirectory()) return [];
+  const entries = fs.readdirSync(agentDir, { withFileTypes: true });
+  const projectIds: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name === "skills") continue;
+    projectIds.push(e.name);
+  }
+  return projectIds;
+}
+
+export type VisibleProject = { projectId: string; artifactsPath: string };
+export type VisibleAgentWork = {
+  agentId: number;
+  name: string;
+  role: string;
+  agentDir: string;
+  projects: VisibleProject[];
+};
+
+/**
+ * Work the given agent can "see": self + all reports' agent dirs and artifact paths.
+ * CEO sees everyone; CTO sees CTO + Engineer; Engineer sees only self.
+ */
+export async function getVisibleWork(db: Db, agentId: number): Promise<VisibleAgentWork[]> {
+  const agentsList = await getDescendantAgents(db, agentId);
+  const out: VisibleAgentWork[] = [];
+
+  for (const agent of agentsList) {
+    const agentDir = getAgentDir(agent);
+    const projectIds = listProjectIdsForAgent(agent);
+    const projects: VisibleProject[] = projectIds.map((projectId) => ({
+      projectId,
+      artifactsPath: getArtifactsDir(agent, projectId),
+    }));
+
+    out.push({
+      agentId: agent.id,
+      name: agent.name,
+      role: agent.role,
+      agentDir,
+      projects,
+    });
+  }
+
+  return out;
+}

@@ -11,6 +11,11 @@
  * the backend; this module only executes the CLI.
  */
 
-export type { RunAgentOptions, RunAgentResult } from "./types.js";
+export type {
+  RunAgentOptions,
+  RunAgentResult,
+  VisibleAgentWork,
+  VisibleProject,
+} from "./types.js";
 
 export { runAgent } from "./runAgent.js";
