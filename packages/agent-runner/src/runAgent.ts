@@ -21,7 +21,8 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
     baseEnv[VISIBLE_WORK_ENV_KEY] = JSON.stringify(visibleWork);
   }
 
-  const { command, args } = getCliInvocation(provider, task);
+  const canReadOutsideWorkspace = visibleWork != null && visibleWork.length > 0;
+  const { command, args } = getCliInvocation(provider, task, cwd, canReadOutsideWorkspace);
 
   return new Promise((resolve) => {
     const proc = spawn(command, args, {
@@ -69,20 +70,34 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
 
 /**
  * Map provider + task to CLI command and args.
- * Adjust for real Cursor/Claude CLI usage (flags, stdin, etc.).
+ * --workspace <cwd>: agent runs in their own dir (so MCP/skills load from there).
+ * When canReadOutsideWorkspace (e.g. CEO reviewing Engineer): add --sandbox disabled so the agent
+ * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' dirs (e.g. /path/to/engineer/project_1/artifacts).
  */
 function getCliInvocation(
   provider: "cursor" | "claude-code",
-  task: string
+  task: string,
+  cwd: string,
+  canReadOutsideWorkspace: boolean
 ): { command: string; args: string[] } {
   switch (provider) {
-    case "cursor":
-      // Example: cursor agent run or cursor -- <task>
-      return { command: "cursor", args: ["agent", "run", "--task", task] };
+    case "cursor": {
+      const args = ["--print", "--trust", "--workspace", cwd];
+      if (canReadOutsideWorkspace) {
+        args.push("--sandbox", "disabled");
+      }
+      args.push(task);
+      return { command: "agent", args };
+    }
     case "claude-code":
-      // Example: claude-code or similar
       return { command: "claude-code", args: [task] };
-    default:
-      return { command: "cursor", args: ["agent", "run", "--task", task] };
+    default: {
+      const args = ["--print", "--trust", "--workspace", cwd];
+      if (canReadOutsideWorkspace) {
+        args.push("--sandbox", "disabled");
+      }
+      args.push(task);
+      return { command: "agent", args };
+    }
   }
 }

@@ -6,24 +6,26 @@
    `agents/{id}-engineer/project_1/artifacts/` (e.g. `agents/3-engineer/project_1/artifacts/`).
 
 2. **Orchestrator** wants the **CEO** to review that work. It:
+   - Resolves the CEO’s **agent dir** (e.g. `getAgentDir(ceoAgent)` → `/path/to/agents/1-ceo`). The CEO’s **MCP and skills** live there (`mcp.json`, `skills/`).
    - Calls **GET /agents/:ceoId/visible-work** (e.g. CEO id = 1).
-   - Gets back a list of agents and artifact paths the CEO can see (CEO + CTO + Engineer + …), e.g.:
+   - Gets back a list of agents and **absolute** artifact paths the CEO can see, e.g.:
      ```json
      [
        { "agentId": 3, "name": "Engineer", "role": "Engineer", "agentDir": "/path/to/agents/3-engineer", "projects": [{ "projectId": "project_1", "artifactsPath": "/path/to/agents/3-engineer/project_1/artifacts" }] }
      ]
      ```
-   - Runs the CEO agent via **agent-runner** with that payload:
+   - Runs the CEO via **agent-runner** with **`cwd` = CEO’s agent dir** (so the CLI loads MCP/skills from there) and **`visibleWork`** so the CEO can read the Engineer’s paths:
      ```ts
      runAgent({
        provider: "cursor",
        role: "CEO",
        task: "…",  // see example below
-       visibleWork: visibleWorkFromApi,  // from GET /agents/1/visible-work
+       cwd: getAgentDir(ceoAgent),   // e.g. /path/to/ceo – MCP/skills from here
+       visibleWork: visibleWorkFromApi,
      });
      ```
 
-3. **Agent-runner** sets env **`PIXEL_VISIBLE_WORK`** = JSON string of that array. The CEO’s CLI process is started with this env, so it **can read** those paths (they’re on the same machine, under the repo or `AGENTS_STORAGE_PATH`).
+3. **Agent-runner** runs the CLI with **`--workspace` = CEO’s dir** (so the CEO runs “in” `/path/to/ceo` and loads that agent’s MCP/skills). It sets env **`PIXEL_VISIBLE_WORK`** to the JSON of visible work (with **absolute** paths like `/path/to/engineer/project_1/artifacts`). Because the Engineer’s work is **outside** the CEO’s workspace, the runner adds **`--sandbox disabled`** when `visibleWork` is set, so the CEO process is allowed to **read those paths**. The CEO can then read the Engineer’s files when the task tells it to use the paths from `PIXEL_VISIBLE_WORK`.
 
 4. **CEO’s task prompt** should tell the agent to:
    - Read **`PIXEL_VISIBLE_WORK`** from the environment (parse the JSON).
