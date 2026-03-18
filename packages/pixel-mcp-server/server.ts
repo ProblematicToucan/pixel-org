@@ -1,0 +1,300 @@
+import {
+  registerAppResource,
+  registerAppTool,
+  RESOURCE_MIME_TYPE,
+} from "@modelcontextprotocol/ext-apps/server";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import * as backend from "./backend.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function getDistDir(): string {
+  return __dirname.endsWith("dist") ? __dirname : path.join(__dirname, "dist");
+}
+
+/**
+ * Creates the Pixel MCP server: backend tools + Pixel Context MCP App (tool + resource).
+ */
+export function createServer(): McpServer {
+  const server = new McpServer({
+    name: "Pixel MCP Server",
+    version: "1.0.0",
+  });
+
+  // --- Backend tools (no UI) ---
+
+  server.registerTool(
+    "pixel_get_visible_work",
+    {
+      description:
+        "Get work this agent can see: self + all reports (artifact paths). Use when you are a lead reviewing reports' work.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      try {
+        const work = await backend.getVisibleWork();
+        const text = JSON.stringify(work, null, 2);
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_list_projects",
+    {
+      description: "List all projects (channels).",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      try {
+        const list = await backend.listProjects();
+        const text = JSON.stringify(list, null, 2);
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_create_project",
+    {
+      description: "Create a new project. Requires name and slug.",
+      inputSchema: z.object({
+        name: z.string().describe("Project display name"),
+        slug: z.string().describe("URL-safe slug"),
+      }),
+    },
+    async (args: { name?: string; slug?: string }): Promise<CallToolResult> => {
+      const name = args?.name ?? "";
+      const slug = args?.slug ?? "";
+      if (!name || !slug) {
+        return {
+          content: [{ type: "text", text: "Error: name and slug are required" }],
+          isError: true,
+        };
+      }
+      try {
+        await backend.createProject(name, slug);
+        return { content: [{ type: "text", text: `Created project "${name}" (${slug})` }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_list_threads",
+    {
+      description: "List threads in a project.",
+      inputSchema: z.object({
+        projectId: z.string().describe("Project UUID"),
+      }),
+    },
+    async (args: { projectId?: string }): Promise<CallToolResult> => {
+      const projectId = args?.projectId ?? "";
+      if (!projectId) {
+        return {
+          content: [{ type: "text", text: "Error: projectId is required" }],
+          isError: true,
+        };
+      }
+      try {
+        const list = await backend.listThreads(projectId);
+        const text = JSON.stringify(list, null, 2);
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_create_thread",
+    {
+      description:
+        "Create a thread in a project (e.g. start work on a task). Uses current agent as owner.",
+      inputSchema: z.object({
+        projectId: z.string().describe("Project UUID"),
+        title: z.string().optional().describe("Optional thread title"),
+      }),
+    },
+    async (args: { projectId?: string; title?: string }): Promise<CallToolResult> => {
+      const projectId = args?.projectId ?? "";
+      if (!projectId) {
+        return {
+          content: [{ type: "text", text: "Error: projectId is required" }],
+          isError: true,
+        };
+      }
+      try {
+        await backend.createThread(projectId, args?.title);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Created thread in project ${projectId}${args?.title ? `: "${args.title}"` : ""}`,
+            },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_list_messages",
+    {
+      description: "List messages in a thread (tickets, comments, discussion).",
+      inputSchema: z.object({
+        threadId: z.string().describe("Thread UUID"),
+      }),
+    },
+    async (args: { threadId?: string }): Promise<CallToolResult> => {
+      const threadId = args?.threadId ?? "";
+      if (!threadId) {
+        return {
+          content: [{ type: "text", text: "Error: threadId is required" }],
+          isError: true,
+        };
+      }
+      try {
+        const list = await backend.listMessages(threadId);
+        const text = JSON.stringify(list, null, 2);
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_post_message",
+    {
+      description: "Post a message to a thread (record progress, reply, or feedback).",
+      inputSchema: z.object({
+        threadId: z.string().describe("Thread UUID"),
+        content: z.string().describe("Message content"),
+      }),
+    },
+    async (args: { threadId?: string; content?: string }): Promise<CallToolResult> => {
+      const threadId = args?.threadId ?? "";
+      const content = args?.content ?? "";
+      if (!threadId || content === undefined) {
+        return {
+          content: [{ type: "text", text: "Error: threadId and content are required" }],
+          isError: true,
+        };
+      }
+      try {
+        await backend.postMessage(threadId, String(content));
+        return { content: [{ type: "text", text: "Message posted." }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  // --- MCP App: Pixel Context (tool + resource) ---
+
+  const resourceUri = "ui://pixel/context/mcp-app.html";
+
+  registerAppTool(
+    server,
+    "pixel_show_context",
+    {
+      title: "Pixel Context",
+      description:
+        "Show projects, threads, and messages for the current agent. Opens an interactive view. Use to see user requests, tickets, and discussion.",
+      inputSchema: z.object({}),
+      _meta: { ui: { resourceUri } },
+    },
+    async (): Promise<CallToolResult> => {
+      try {
+        const projects = await backend.listProjects();
+        const projectsWithThreads: {
+          id: string;
+          name: string;
+          slug: string;
+          threads?: {
+            id: string;
+            agentId: string;
+            title: string | null;
+            messages: { id: string; agentId: string; content: string }[];
+          }[];
+        }[] = [];
+
+        for (const p of projects) {
+          const threadList = await backend.listThreads(p.id);
+          const threadsWithMessages = await Promise.all(
+            threadList.map(async (t) => {
+              const msgs = await backend.listMessages(t.id);
+              return {
+                id: t.id,
+                agentId: t.agentId,
+                title: t.title,
+                messages: msgs.map((m) => ({
+                  id: m.id,
+                  agentId: m.agentId,
+                  content: m.content,
+                })),
+              };
+            })
+          );
+          projectsWithThreads.push({
+            id: p.id,
+            name: p.name,
+            slug: p.slug,
+            threads: threadsWithMessages,
+          });
+        }
+
+        const data = { projects: projectsWithThreads };
+        const text = JSON.stringify(data, null, 2);
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: data,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  registerAppResource(
+    server,
+    resourceUri,
+    resourceUri,
+    { mimeType: RESOURCE_MIME_TYPE },
+    async () => {
+      const dir = getDistDir();
+      const html = await fs.readFile(path.join(dir, "mcp-app.html"), "utf-8");
+      return {
+        contents: [
+          { uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html },
+        ],
+      };
+    }
+  );
+
+  return server;
+}

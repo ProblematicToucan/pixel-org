@@ -1,0 +1,39 @@
+{
+  "name": "@pixel-org/pixel-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server exposing Pixel backend as tools; includes Pixel Context MCP App",
+  "main": "dist/server.js",
+  "bin": {
+    "pixel-mcp-server": "dist/main.js"
+  },
+  "scripts": {
+    "build": "npm run build:app && tsc -p tsconfig.server.json",
+    "build:app": "cross-env INPUT=mcp-app.html vite build",
+    "watch": "cross-env INPUT=mcp-app.html vite build --watch",
+    "dev": "cross-env NODE_ENV=development concurrently \"npm run watch\" \"tsx --watch main.ts\"",
+    "serve": "tsx main.ts",
+    "serve:stdio": "tsx main.ts --stdio",
+    "start": "npm run build && node dist/index.js",
+    "start:stdio": "npm run build && node dist/main.js --stdio"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}

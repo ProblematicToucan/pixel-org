@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Pixel Context</title>
+</head>
+<body>
+  <main class="main">
+    <header class="header">
+      <h1>Pixel Context</h1>
+      <p class="subtitle">Projects, threads, and messages for this agent</p>
+      <button id="refresh-btn" class="btn">Refresh</button>
+    </header>
+    <div id="content" class="content">
+      <p class="notice">Click Refresh to load projects and threads.</p>
+    </div>
+    <div id="error" class="error" hidden></div>
+  </main>
+  <script type="module" src="/src/mcp-app.ts"></script>
+</body>
+</html>
