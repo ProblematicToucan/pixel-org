@@ -11,5 +11,15 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.32.1"
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "esbuild": ">=0.25.0"
+    },
+    "allowedDeprecatedVersions": {
+      "@esbuild-kit/core-utils": "*",
+      "@esbuild-kit/esm-loader": "*",
+      "prebuild-install": "*"
+    }
+  }
 }

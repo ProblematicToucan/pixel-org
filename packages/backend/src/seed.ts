@@ -13,18 +13,20 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { agents } from "./db/schema.js";
+import { ensureAgentDir } from "./storage/index.js";
 
 const EXAMPLE_LEAD_NAME = "Lead";
 
 async function seed() {
   const [existing] = await db
-    .select({ id: agents.id })
+    .select({ id: agents.id, role: agents.role })
     .from(agents)
     .where(eq(agents.name, EXAMPLE_LEAD_NAME))
     .limit(1);
 
   if (existing) {
-    console.log("Example lead agent already exists, skipping seed.");
+    ensureAgentDir({ id: existing.id, role: existing.role });
+    console.log("Example lead agent already exists, ensured agent dir; skipping insert.");
     return;
   }
 
@@ -36,7 +38,16 @@ async function seed() {
     parentId: null,
   });
 
-  console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME);
+  const [inserted] = await db
+    .select({ id: agents.id, role: agents.role })
+    .from(agents)
+    .where(eq(agents.name, EXAMPLE_LEAD_NAME))
+    .limit(1);
+
+  if (inserted) {
+    ensureAgentDir(inserted);
+    console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME, "and agent dir:", inserted.id + "-" + inserted.role.toLowerCase());
+  }
 }
 
 seed().catch((e) => {
