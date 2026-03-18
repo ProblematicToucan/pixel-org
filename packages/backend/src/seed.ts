@@ -1,6 +1,5 @@
 /**
- * Optional seed: creates one example org structure with no roles.
- * Users define their own role names and hierarchy (and which roles can recruit) via API.
+ * Optional seed: creates one example lead agent (e.g. CEO).
  * Run after migrations: pnpm run db:seed
  */
 import path from "path";
@@ -13,28 +12,31 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
-import { orgStructures } from "./db/schema.js";
+import { agents } from "./db/schema.js";
 
-const EXAMPLE_STRUCTURE_NAME = "My org";
+const EXAMPLE_LEAD_NAME = "Lead";
 
 async function seed() {
   const [existing] = await db
-    .select({ id: orgStructures.id })
-    .from(orgStructures)
-    .where(eq(orgStructures.name, EXAMPLE_STRUCTURE_NAME))
+    .select({ id: agents.id })
+    .from(agents)
+    .where(eq(agents.name, EXAMPLE_LEAD_NAME))
     .limit(1);
 
   if (existing) {
-    console.log("Example org structure already exists, skipping seed.");
+    console.log("Example lead agent already exists, skipping seed.");
     return;
   }
 
-  await db.insert(orgStructures).values({
-    name: EXAMPLE_STRUCTURE_NAME,
-    description: "Add roles and agents via API; role names and hierarchy are user-defined.",
+  await db.insert(agents).values({
+    name: EXAMPLE_LEAD_NAME,
+    type: "cursor",
+    role: "CEO",
+    isLead: true,
+    parentId: null,
   });
 
-  console.log("Seeded example org structure:", EXAMPLE_STRUCTURE_NAME, "- add roles and agents via API.");
+  console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME);
 }
 
 seed().catch((e) => {

@@ -1,7 +1,7 @@
 export interface RunAgentOptions {
   /** Which agent CLI to use (e.g. "cursor", "claude-code") */
   provider: "cursor" | "claude-code";
-  /** Role slug for this run (user-defined in org_roles). Passed as PIXEL_AGENT_ROLE. */
+  /** Role for this run (agent’s role string). Passed as PIXEL_AGENT_ROLE. */
   role: string;
   /** Task or prompt to send to the agent */
   task: string;
