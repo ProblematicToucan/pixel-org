@@ -7,7 +7,7 @@ MCP server that exposes the Pixel backend as tools for the agent CLI. Includes t
 - **PIXEL_BACKEND_URL** – Backend base URL (default `http://localhost:3000`).
 - **PIXEL_AGENT_ID** – Current agent UUID (required for tools that act as the agent).
 
-Set these in the agent’s `mcp.json` or before starting the server.
+Set these in the agent’s `./.agents/mcp.json` (or via env) before starting the server.
 
 ## Tools
 
@@ -30,11 +30,11 @@ The **pixel-backend** skill lives in this package so it ships with the app:
 
 - **Path:** `packages/pixel-mcp-server/skills/pixel-backend/SKILL.md`
 
-Use it by copying this `skills/` directory into each agent’s skills location (e.g. `agents/{id}-role/skills/`) when provisioning, or by pointing your agent CLI at this path. The skill tells the agent how to use the Pixel MCP tools to record work, read context (threads, messages, goals), and stay auditable.
+Use it by copying this `skills/` directory into each agent’s skills location (e.g. `agents/{id}-role/.agents/skills/`) when provisioning, or by pointing your agent CLI at this path. The skill tells the agent how to use the Pixel MCP tools to record work, read context (threads, messages, goals), and stay auditable.
 
 ## Running
 
-**Stdio (for agent `mcp.json`):**
+**Stdio (for agent `./.agents/mcp.json`):**
 
 ```bash
 pnpm run build && node dist/main.js
@@ -56,7 +56,7 @@ pnpm run dev
 # Watches app build and runs server with tsx; use --http in main.ts or pass via env if needed
 ```
 
-## Agent `mcp.json` example
+## Agent `./.agents/mcp.json` example
 
 ```json
 {

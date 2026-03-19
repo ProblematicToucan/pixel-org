@@ -18,7 +18,7 @@ So: **project → threads (each = one agent’s work) → messages (any agent ca
 
 ## Agent ↔ Backend via MCP
 
-Agents interact with the backend through the **Pixel MCP server** (tools), not by calling the REST API directly. The agent’s `mcp.json` runs the Pixel MCP server; the orchestrator sets `PIXEL_AGENT_ID` and `PIXEL_BACKEND_URL` (e.g. via `runAgent({ agentId, backendUrl, ... })`). Use the **pixel-backend** skill shipped in the app at `packages/pixel-mcp-server/skills/pixel-backend/SKILL.md` (copy into each agent’s skills dir or point the CLI at it). The skill tells the agent to record work (thread + messages), read context (threads, messages as tickets), and read/set project goals via MCP tools.
+Agents interact with the backend through the **Pixel MCP server** (tools), not by calling the REST API directly. The agent’s `./.agents/mcp.json` runs the Pixel MCP server; the orchestrator sets `PIXEL_AGENT_ID` and `PIXEL_BACKEND_URL` (e.g. via `runAgent({ agentId, backendUrl, ... })`). Use the **pixel-backend** skill shipped in the app at `packages/pixel-mcp-server/skills/pixel-backend/SKILL.md` (copy into each agent’s `./.agents/skills/` dir or point the CLI at it). The skill tells the agent to record work (thread + messages), read context (threads, messages as tickets), and read/set project goals via MCP tools.
 
 ## How the CLI sees work (CEO reviews Engineer)
 

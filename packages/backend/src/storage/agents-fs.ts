@@ -36,12 +36,12 @@ export function getAgentDir(agent: { id: string; role: string }): string {
 
 /** Full path: agents/{agentDirName}/mcp.json (MCP config – one per agent, shared across projects). */
 export function getMcpConfigPath(agent: { id: string; role: string }): string {
-  return path.join(getAgentDir(agent), "mcp.json");
+  return path.join(getAgentDir(agent), ".agents", "mcp.json");
 }
 
-/** Full path: agents/{agentDirName}/skills/ (skills config – one per agent, shared across projects). */
+/** Full path: agents/{agentDirName}/.agents/skills/ (skills config – one per agent, shared across projects). */
 export function getSkillsDir(agent: { id: string; role: string }): string {
-  return path.join(getAgentDir(agent), "skills");
+  return path.join(getAgentDir(agent), ".agents", "skills");
 }
 
 /** Full path: agents/{agentDirName}/{projectId}/ (project = artifacts only). */
@@ -65,12 +65,14 @@ export function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-/** Ensures agent dir + mcp.json + skills/ (MCP and skills live at agent level). */
+/** Ensures agent dir + .agents/mcp.json + .agents/skills/. */
 export function ensureAgentDir(agent: { id: string; role: string }): string {
   const agentDir = getAgentDir(agent);
   const skillsDir = getSkillsDir(agent);
   const mcpPath = getMcpConfigPath(agent);
 
+  // Cursor/Claude agent CLIs commonly expect `./.agents` under the workspace.
+  ensureDir(path.dirname(mcpPath));
   ensureDir(skillsDir);
   if (!fs.existsSync(mcpPath)) {
     fs.writeFileSync(

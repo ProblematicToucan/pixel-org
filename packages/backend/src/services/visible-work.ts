@@ -35,6 +35,9 @@ function listProjectIdsForAgent(agent: { id: string; role: string }): string[] {
   const projectIds: string[] = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
+    // Skip non-project directories at agent root.
+    if (e.name === ".agents") continue;
+    // Back-compat: older layout kept `skills/` at agent root.
     if (e.name === "skills") continue;
     projectIds.push(e.name);
   }
