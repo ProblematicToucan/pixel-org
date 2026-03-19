@@ -4,6 +4,11 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Repo root (parent of agents dir). Used for Pixel MCP server path. */
+export function getRepoRoot(): string {
+  return path.dirname(getAgentsStorageRoot());
+}
+
 /** Default root for agent data: repo_root/agents (or AGENTS_STORAGE_PATH). */
 export function getAgentsStorageRoot(): string {
   const fromEnv = process.env.AGENTS_STORAGE_PATH;
@@ -94,4 +99,77 @@ export function ensureAgentProjectLayout(
 
   ensureDir(artifactsDir);
   return { agentDir, projectDir, artifactsDir };
+}
+
+/** Full path: agents/{agentDirName}/AGENTS.md (persona for CLI). */
+export function getAgentsMdPath(agent: { id: string; role: string }): string {
+  return path.join(getAgentDir(agent), "AGENTS.md");
+}
+
+/** Absolute path to Pixel MCP server entry script (repo root relative). */
+export function getPixelMcpServerPath(): string {
+  return path.join(getRepoRoot(), "packages", "pixel-mcp-server", "dist", "main.js");
+}
+
+/** Source dir for pixel-backend skill (to copy into each agent). */
+function getPixelBackendSkillSourceDir(): string {
+  return path.join(getRepoRoot(), "packages", "pixel-mcp-server", "skills", "pixel-backend");
+}
+
+/** Agent row shape for provisioning (id, name, role, config). */
+export type AgentForProvision = { id: string; name: string; role: string; config: string | null };
+
+/** Write AGENTS.md from name, role, and plain-text config. */
+export function writeAgentsMd(agent: AgentForProvision): void {
+  const p = getAgentsMdPath(agent);
+  ensureDir(path.dirname(p));
+  const header = `# Agent: ${agent.name} (${agent.role})\n\nYou are **${agent.name}**, role **${agent.role}**. Act as this agent in all tasks.\n\n`;
+  const body = agent.config?.trim() ? `## Instructions\n\n${agent.config.trim()}\n` : "";
+  fs.writeFileSync(p, header + body, "utf-8");
+}
+
+/** Write .agents/mcp.json with Pixel MCP server entry (absolute path, env for this agent). */
+export function writeMcpJson(agent: { id: string; role: string }): void {
+  const mcpPath = getMcpConfigPath(agent);
+  ensureDir(path.dirname(mcpPath));
+  const serverPath = getPixelMcpServerPath();
+  const payload = {
+    mcp: [
+      {
+        name: "pixel-backend",
+        command: "node",
+        args: [serverPath],
+        env: {
+          PIXEL_BACKEND_URL: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",
+          PIXEL_AGENT_ID: agent.id,
+        },
+      },
+    ],
+    comment: "MCP config for this agent",
+  };
+  fs.writeFileSync(mcpPath, JSON.stringify(payload, null, 2), "utf-8");
+}
+
+/** Copy pixel-backend skill into agent .agents/skills/pixel-backend/. */
+export function copyPixelBackendSkill(agent: { id: string; role: string }): void {
+  const src = getPixelBackendSkillSourceDir();
+  const destDir = getSkillsDir(agent);
+  const dest = path.join(destDir, "pixel-backend");
+  ensureDir(dest);
+  const skillFile = path.join(src, "SKILL.md");
+  if (fs.existsSync(skillFile)) {
+    fs.copyFileSync(skillFile, path.join(dest, "SKILL.md"));
+  }
+}
+
+/**
+ * Full provisioning: ensure dir, write AGENTS.md, .agents/mcp.json, and copy pixel-backend skill.
+ * Call after creating/updating an agent so the CLI has persona + MCP + skills.
+ */
+export function provisionAgentWorkspace(agent: AgentForProvision): string {
+  ensureAgentDir(agent);
+  writeAgentsMd(agent);
+  writeMcpJson(agent);
+  copyPixelBackendSkill(agent);
+  return getAgentDir(agent);
 }

@@ -10,6 +10,7 @@ import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
+import { provisionAgentWorkspace } from "./storage/index.js";
 import { eq } from "drizzle-orm";
 
 const app = express();
@@ -29,6 +30,59 @@ app.get("/agents", async (_req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch agents" });
+  }
+});
+
+app.get("/agents/:id", async (req, res) => {
+  try {
+    const id = req.params.id?.trim();
+    if (!id) {
+      res.status(400).json({ error: "Invalid agent id" });
+      return;
+    }
+    const rows = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+    if (rows.length === 0) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch agent" });
+  }
+});
+
+app.patch("/agents/:id", async (req, res) => {
+  try {
+    const id = req.params.id?.trim();
+    const { name, role, config } = req.body;
+    if (!id) {
+      res.status(400).json({ error: "Invalid agent id" });
+      return;
+    }
+    const updates: { name?: string; role?: string; config?: string | null; updatedAt?: string } = {};
+    if (typeof name === "string") updates.name = name.trim();
+    if (typeof role === "string") updates.role = role.trim();
+    if (config !== undefined) updates.config = config === null || config === "" ? null : String(config).trim();
+    updates.updatedAt = new Date().toISOString();
+    if (Object.keys(updates).filter((k) => k !== "updatedAt").length === 0) {
+      res.status(400).json({ error: "No valid fields to update" });
+      return;
+    }
+    await db.update(agents).set(updates).where(eq(agents.id, id));
+    const [updated] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+    if (updated) {
+      provisionAgentWorkspace({
+        id: updated.id,
+        name: updated.name,
+        role: updated.role,
+        config: updated.config,
+      });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update agent" });
   }
 });
 

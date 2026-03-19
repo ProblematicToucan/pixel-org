@@ -77,8 +77,18 @@ export interface VisibleAgentWork {
 // --- API ---
 export const api = {
   getAgents: () => fetchApi<Agent[]>("/agents"),
+  getAgent: (id: string) =>
+    fetchApi<Agent>("/agents/" + encodeURIComponent(id)),
   getAgentVisibleWork: (id: string) =>
     fetchApi<VisibleAgentWork[]>("/agents/" + encodeURIComponent(id) + "/visible-work"),
+  updateAgent: (
+    id: string,
+    body: { name?: string; role?: string; config?: string | null }
+  ) =>
+    fetchApi<{ success: boolean }>("/agents/" + encodeURIComponent(id), {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 
   getProjects: () => fetchApi<Project[]>("/projects"),
   getProject: (id: string) =>

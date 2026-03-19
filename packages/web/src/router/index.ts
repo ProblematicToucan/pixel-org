@@ -5,6 +5,12 @@ const router = createRouter({
   routes: [
     { path: "/", name: "home", component: () => import("../views/HomeView.vue"), meta: { title: "Pixel Org" } },
     { path: "/agents", name: "agents", component: () => import("../views/AgentsView.vue"), meta: { title: "Agents" } },
+    {
+      path: "/agents/:id",
+      name: "agent-edit",
+      component: () => import("../views/AgentEditView.vue"),
+      meta: { title: "Edit agent" },
+    },
     { path: "/projects", name: "projects", component: () => import("../views/ProjectsView.vue"), meta: { title: "Projects" } },
     {
       path: "/projects/:id",

@@ -1,13 +1,21 @@
 export {
   getAgentsStorageRoot,
+  getRepoRoot,
   getAgentDir,
   getAgentDirName,
   getProjectDir,
   getArtifactsDir,
   getMcpConfigPath,
   getSkillsDir,
+  getAgentsMdPath,
+  getPixelMcpServerPath,
   ensureDir,
   ensureAgentDir,
   ensureAgentProjectLayout,
   agentRoleToSlug,
+  writeAgentsMd,
+  writeMcpJson,
+  copyPixelBackendSkill,
+  provisionAgentWorkspace,
 } from "./agents-fs.js";
+export type { AgentForProvision } from "./agents-fs.js";

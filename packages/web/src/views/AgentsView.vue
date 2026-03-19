@@ -56,15 +56,20 @@ onMounted(load);
           <div class="agent-meta">
             <code class="id">{{ a.id }}</code>
           </div>
-          <button
-            v-if="a.isLead"
-            type="button"
-            class="btn small"
-            :class="{ active: visibleWorkAgentId === a.id }"
-            @click="visibleWorkAgentId === a.id ? clearVisibleWork() : loadVisibleWork(a.id)"
-          >
-            {{ visibleWorkAgentId === a.id ? "Hide" : "Visible work" }}
-          </button>
+          <div class="agent-actions">
+            <router-link :to="{ name: 'agent-edit', params: { id: a.id } }" class="btn small">
+              Edit
+            </router-link>
+            <button
+              v-if="a.isLead"
+              type="button"
+              class="btn small"
+              :class="{ active: visibleWorkAgentId === a.id }"
+              @click="visibleWorkAgentId === a.id ? clearVisibleWork() : loadVisibleWork(a.id)"
+            >
+              {{ visibleWorkAgentId === a.id ? "Hide" : "Visible work" }}
+            </button>
+          </div>
         </li>
       </ul>
 
@@ -144,8 +149,17 @@ h1 {
   font-size: 0.75rem;
   color: var(--muted);
 }
-.btn {
+.agent-actions {
   margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.agent-actions a.btn {
+  text-decoration: none;
+  display: inline-block;
+}
+.btn {
   padding: 0.35rem 0.6rem;
   font-size: 0.8rem;
   border: 1px solid var(--border);

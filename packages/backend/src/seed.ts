@@ -13,20 +13,25 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { agents } from "./db/schema.js";
-import { ensureAgentDir } from "./storage/index.js";
+import { provisionAgentWorkspace } from "./storage/index.js";
 
 const EXAMPLE_LEAD_NAME = "Lead";
 
 async function seed() {
   const [existing] = await db
-    .select({ id: agents.id, role: agents.role })
+    .select()
     .from(agents)
     .where(eq(agents.name, EXAMPLE_LEAD_NAME))
     .limit(1);
 
   if (existing) {
-    ensureAgentDir({ id: existing.id, role: existing.role });
-    console.log("Example lead agent already exists, ensured agent dir; skipping insert.");
+    provisionAgentWorkspace({
+      id: existing.id,
+      name: existing.name,
+      role: existing.role,
+      config: existing.config,
+    });
+    console.log("Example lead agent already exists; provisioned workspace (AGENTS.md, mcp.json, skills).");
     return;
   }
 
@@ -39,14 +44,19 @@ async function seed() {
   });
 
   const [inserted] = await db
-    .select({ id: agents.id, role: agents.role })
+    .select()
     .from(agents)
     .where(eq(agents.name, EXAMPLE_LEAD_NAME))
     .limit(1);
 
   if (inserted) {
-    ensureAgentDir(inserted);
-    console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME, "and agent dir:", inserted.id + "-" + inserted.role.toLowerCase());
+    provisionAgentWorkspace({
+      id: inserted.id,
+      name: inserted.name,
+      role: inserted.role,
+      config: inserted.config,
+    });
+    console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME, "and provisioned agent dir:", inserted.id + "-" + inserted.role.toLowerCase());
   }
 }
 
