@@ -17,7 +17,6 @@ const newAgentId = ref("");
 const BOARD_OPTION = "__board__";
 let fallbackPollTimer: number | null = null;
 let stream: EventSource | null = null;
-const expandedRunKeys = ref<Record<string, boolean>>({});
 const selectedRunEventIds = ref<Record<string, string>>({});
 
 type RunEvent = {
@@ -272,14 +271,6 @@ const timelineItems = computed<TimelineItem[]>(() => {
   return items;
 });
 
-function isRunExpanded(key: string): boolean {
-  return expandedRunKeys.value[key] === true;
-}
-
-function toggleRunDetails(key: string) {
-  expandedRunKeys.value[key] = !isRunExpanded(key);
-}
-
 function selectedRunEvent(item: Extract<TimelineItem, { kind: "run" }>): RunEvent {
   const selectedId = selectedRunEventIds.value[item.key];
   return item.events.find((e) => e.message.id === selectedId) ?? item.events[item.events.length - 1];
@@ -302,6 +293,15 @@ function isInformationalStartedMessage(message: Message): boolean {
 function startedInfoSummary(message: Message): string {
   const objective = parseObjective(message.content);
   return objective ? `Run started: ${objective}` : "Run started.";
+}
+
+function standaloneRunStatusLabel(message: Message): string | null {
+  if (message.actorType !== "agent") return null;
+  const normalized = parseStatus(message.content)?.trim().toLowerCase();
+  if (normalized === "in progress" || normalized === "completed") {
+    return titleCaseStatus(normalized);
+  }
+  return null;
 }
 
 onMounted(loadThreadAndMessages);
@@ -360,8 +360,13 @@ onUnmounted(() => {
                 <p class="content info-content">{{ startedInfoSummary(item.message) }}</p>
               </template>
               <template v-else>
-                <span class="author">{{ messageAuthor(item.message) }}</span>
-                <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
+                <div class="info-row">
+                  <span class="author">{{ messageAuthor(item.message) }}</span>
+                  <span v-if="standaloneRunStatusLabel(item.message)" class="run-badge">
+                    {{ standaloneRunStatusLabel(item.message) }}
+                  </span>
+                  <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
+                </div>
                 <p class="content">{{ item.message.content }}</p>
               </template>
             </template>
@@ -384,10 +389,7 @@ onUnmounted(() => {
                 </button>
               </div>
               <p class="content">{{ runPreview(selectedRunEvent(item).message.content) }}</p>
-              <button type="button" class="details-toggle" @click="toggleRunDetails(item.key)">
-                {{ isRunExpanded(item.key) ? "Hide details" : "View details" }}
-              </button>
-              <div v-if="isRunExpanded(item.key)" class="run-details">
+              <div class="run-details">
                 <p class="run-meta">Run ID: {{ item.runId }}</p>
                 <ul class="run-events">
                   <li>
@@ -511,15 +513,6 @@ h1 {
   color: var(--bg);
   background: var(--accent);
   border-color: var(--accent);
-}
-.details-toggle {
-  margin-top: 0.4rem;
-  border: none;
-  background: transparent;
-  color: var(--accent);
-  padding: 0;
-  font-size: 0.85rem;
-  cursor: pointer;
 }
 .run-details {
   margin-top: 0.6rem;
