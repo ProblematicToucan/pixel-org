@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { runAgent } from "@pixel-org/agent-runner";
-import { db, agents, projects, agentRunRequests } from "../db/index.js";
-import { getAgentDir } from "../storage/index.js";
+import { db, agents, projects, messages, agentRunRequests } from "../db/index.js";
+import { getAgentDir, provisionAgentWorkspace } from "../storage/index.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
@@ -34,6 +34,14 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     return;
   }
 
+  // Refresh agent workspace so latest MCP skill/template updates are present before each run.
+  provisionAgentWorkspace({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    config: agent.config,
+  });
+
   await db
     .update(agentRunRequests)
     .set({
@@ -43,6 +51,21 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     })
     .where(eq(agentRunRequests.id, request.id));
 
+  const beforeStartMessages = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+  const baselineAgentMessageCount = beforeStartMessages.filter((m) => m.agentId === agent.id).length;
+
+  await db.insert(messages).values({
+    threadId: request.threadId,
+    agentId: agent.id,
+    actorType: "agent",
+    actorName: agent.name,
+    content: [
+      "Status: Started",
+      `Objective: Kickoff response for project ${request.projectId}`,
+      `Run: ${request.id} (${request.reason}, model=${request.model})`,
+    ].join("\n"),
+  });
+
   try {
     const task = [
       "A board kickoff thread has been created.",
@@ -50,6 +73,9 @@ async function runQueuedRequest(requestId: string): Promise<void> {
       `Thread ID: ${request.threadId}`,
       `Reason: ${request.reason}`,
       "Model policy: auto.",
+      "You MUST post at least one message to this exact thread using pixel_post_message.",
+      "Required first action: call pixel_post_message with 'Status: In Progress' and your immediate plan.",
+      "Required final action: call pixel_post_message with either 'Status: Completed' or 'Status: Blocked'.",
       "Read project goals and react in the kickoff thread with an actionable leadership response.",
       project.goals ? `Project goals:\n${project.goals}` : "Project goals are currently empty.",
     ].join("\n");
@@ -58,6 +84,7 @@ async function runQueuedRequest(requestId: string): Promise<void> {
       role: agent.role,
       task,
       cwd: getAgentDir({ id: agent.id, role: agent.role }),
+      timeoutMs: 20 * 60 * 1000,
       agentId: agent.id,
       backendUrl: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",
       env: {
@@ -71,20 +98,68 @@ async function runQueuedRequest(requestId: string): Promise<void> {
       .set({
         status: result.success ? "done" : "failed",
         error: result.success ? null : (result.stderr || "Agent run failed"),
+        pid: result.pid ?? null,
+        command: result.command ?? null,
+        args: result.args ? JSON.stringify(result.args) : null,
+        exitCode: result.exitCode,
+        stdout: result.stdout || null,
+        stderr: result.stderr || null,
+        timedOut: result.timedOut === true,
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(agentRunRequests.id, request.id));
+
+    const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+    const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+    const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
+    if (!hasAgentReply) {
+      const fallback = result.success
+        ? [
+            "Status: Completed",
+            "Objective: Kickoff response",
+            "Actions:",
+            "- CLI run completed but no thread update was posted by agent.",
+            "- Added fallback update for audit continuity.",
+            "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
+          ].join("\n")
+        : [
+            "Status: Blocked",
+            "Objective: Kickoff response",
+            `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+            `Error: ${result.stderr || "Unknown error"}`,
+          ].join("\n");
+      await db.insert(messages).values({
+        threadId: request.threadId,
+        agentId: agent.id,
+        actorType: "agent",
+        actorName: agent.name,
+        content: fallback,
+      });
+    }
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message : "Unknown orchestration error";
     await db
       .update(agentRunRequests)
       .set({
         status: "failed",
-        error: error instanceof Error ? error.message : "Unknown orchestration error",
+        error: errMsg,
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(agentRunRequests.id, request.id));
+    await db.insert(messages).values({
+      threadId: request.threadId,
+      agentId: agent.id,
+      actorType: "agent",
+      actorName: agent.name,
+      content: [
+        "Status: Blocked",
+        "Objective: Kickoff response",
+        `Reason: Orchestration error while launching agent CLI.`,
+        `Error: ${errMsg}`,
+      ].join("\n"),
+    });
   }
 }
 

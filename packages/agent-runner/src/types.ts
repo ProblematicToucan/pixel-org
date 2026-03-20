@@ -40,4 +40,7 @@ export interface RunAgentResult {
   stderr: string;
   exitCode: number;
   timedOut?: boolean;
+  pid?: number;
+  command?: string;
+  args?: string[];
 }

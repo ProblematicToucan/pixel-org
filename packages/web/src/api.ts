@@ -77,12 +77,21 @@ export interface AgentRunRequest {
   model: string;
   idempotencyKey: string;
   status: "queued" | "running" | "done" | "failed";
+  pid: number | null;
+  command: string | null;
+  args: string | null;
+  exitCode: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  timedOut: boolean | null;
   error: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export interface ActiveAgentRun extends AgentRunRequest {}
 
 export interface VisibleProject {
   projectId: string;
@@ -151,6 +160,7 @@ export const api = {
     fetchApi<Message[]>("/threads/" + encodeURIComponent(threadId) + "/messages"),
   getThreadRuns: (threadId: string) =>
     fetchApi<AgentRunRequest[]>("/threads/" + encodeURIComponent(threadId) + "/runs"),
+  getActiveRuns: () => fetchApi<ActiveAgentRun[]>("/runs/active"),
   postMessage: (
     threadId: string,
     body:

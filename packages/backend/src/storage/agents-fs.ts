@@ -172,9 +172,10 @@ export function writeMcpJson(agent: { id: string; role: string }): void {
   ensureDir(path.dirname(cursorPath));
   ensureDir(path.dirname(claudePath));
   const serverPath = getPixelMcpServerPath();
+  const serverName = `pixel-backend-${agent.id}`;
   const payload = {
     mcpServers: {
-      "pixel-backend": {
+      [serverName]: {
         command: "node",
         args: [serverPath],
         env: {

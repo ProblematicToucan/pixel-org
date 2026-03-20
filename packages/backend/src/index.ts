@@ -18,7 +18,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import fs from "node:fs";
 
 const app = express();
@@ -412,6 +412,20 @@ app.get("/threads/:id/runs", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch thread run requests" });
+  }
+});
+
+app.get("/runs/active", async (_req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(agentRunRequests)
+      .where(or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running")));
+    rows.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch active run requests" });
   }
 });
 

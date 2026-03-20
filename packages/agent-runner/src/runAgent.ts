@@ -62,6 +62,9 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
         stderr,
         exitCode: code ?? (signal ? -1 : 0),
         timedOut: timedOut || undefined,
+        pid: proc.pid,
+        command,
+        args,
       });
     });
 
@@ -72,6 +75,9 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
         stdout,
         stderr: stderr || err.message,
         exitCode: -1,
+        pid: proc.pid,
+        command,
+        args,
       });
     });
   });

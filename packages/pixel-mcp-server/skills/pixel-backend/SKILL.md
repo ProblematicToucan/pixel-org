@@ -40,9 +40,14 @@ Identity (who you are) and backend URL are set via env (`PIXEL_AGENT_ID`, `PIXEL
 1. **At start of a task:**  
    - Ensure a thread exists for the project and your work (create one with `pixel_create_thread` if needed).  
    - Post a message: e.g. "Started: [short task description]".
+   - Do this immediately; do not wait until code changes are complete.
 
 2. **At end of task:**  
    - Post a message: "Completed: [summary]" or "Blocked: [reason]".
+
+Hard requirement:
+- Every autonomous run must produce at least one `pixel_post_message` update in the assigned thread.
+- If execution fails, still post a `Blocked` message with the concrete failure reason.
 
 This keeps every run tied to a thread and messages so the user can audit what was done.
 
