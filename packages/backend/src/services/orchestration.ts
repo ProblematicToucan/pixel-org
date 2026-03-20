@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
 import { runAgent } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
-import { getAgentDir, provisionAgentWorkspace } from "../storage/index.js";
+import {
+  ensureAgentProjectLayout,
+  getAgentDir,
+  provisionAgentWorkspace,
+} from "../storage/index.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
@@ -122,6 +126,11 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     config: agent.config,
   });
 
+  const { projectDir, artifactsDir } = ensureAgentProjectLayout(
+    { id: agent.id, role: agent.role },
+    request.projectId
+  );
+
   const beforeStartMessages = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
   const baselineAgentMessageCount = beforeStartMessages.filter((m) => m.agentId === agent.id).length;
 
@@ -150,6 +159,9 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         : request.reason === "thread_message"
           ? "A new message was posted in one of your owned threads. Review it and respond with next actions."
           : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
+      `Your workspace is ${projectDir} (project path). Work only inside this directory for any local file creation or edits for this project.`,
+      `Put artifacts and deliverables under ${artifactsDir} (subfolder of the project path above).`,
+      `The agent CLI may be spawned with a different cwd (your agent home) for MCP/skills; still treat the project path above as the only writable project workspace unless Pixel MCP explicitly requires reading elsewhere.`,
       `Project ID: ${request.projectId}`,
       `Thread ID: ${request.threadId}`,
       `Reason: ${request.reason}`,
@@ -176,6 +188,9 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       env: {
         PIXEL_RUN_REASON: request.reason,
         PIXEL_MODEL: request.model,
+        PIXEL_PROJECT_ID: request.projectId,
+        PIXEL_PROJECT_WORKSPACE: projectDir,
+        PIXEL_PROJECT_ARTIFACTS: artifactsDir,
       },
       onSpawn: ({ pid, command, args }) => {
         void db
