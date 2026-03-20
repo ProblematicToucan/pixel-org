@@ -11,7 +11,7 @@ import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages, agentRunRequests } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
-import { enqueueKickoffLeadRun } from "./services/orchestration.js";
+import { enqueueKickoffLeadRun, runAwakeCycle, startAwakeScheduler } from "./services/orchestration.js";
 import {
   provisionAgentWorkspace,
   getAgentsMdConfigPointer,
@@ -417,15 +417,42 @@ app.get("/threads/:id/runs", async (req, res) => {
 
 app.get("/runs/active", async (_req, res) => {
   try {
-    const rows = await db
-      .select()
+    const enriched = await db
+      .select({
+        run: agentRunRequests,
+        agentName: agents.name,
+        agentRole: agents.role,
+        projectName: projects.name,
+        threadTitle: threads.title,
+      })
       .from(agentRunRequests)
+      .leftJoin(agents, eq(agentRunRequests.agentId, agents.id))
+      .leftJoin(projects, eq(agentRunRequests.projectId, projects.id))
+      .leftJoin(threads, eq(agentRunRequests.threadId, threads.id))
       .where(or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running")));
-    rows.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    res.json(rows);
+    enriched.sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime());
+    res.json(
+      enriched.map((row) => ({
+        ...row.run,
+        agentName: row.agentName ?? "Unknown agent",
+        agentRole: row.agentRole ?? null,
+        projectName: row.projectName ?? "Unknown project",
+        threadTitle: row.threadTitle ?? null,
+      }))
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch active run requests" });
+  }
+});
+
+app.post("/orchestration/awake/run", async (_req, res) => {
+  try {
+    const result = await runAwakeCycle();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to run awake cycle" });
   }
 });
 
@@ -485,6 +512,12 @@ app.post("/threads/:id/messages", async (req, res) => {
 
 syncAgentConfigPointers()
   .then(() => {
+    const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
+    const pollMs = Number.isFinite(pollMsRaw) ? Math.max(5000, Math.floor(pollMsRaw)) : 30000;
+    startAwakeScheduler(pollMs);
+    void runAwakeCycle().catch((err) => {
+      console.error("Initial awake cycle failed:", err);
+    });
     app.listen(port, () => {
       console.log(`Backend listening on http://localhost:${port}`);
     });

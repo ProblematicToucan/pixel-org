@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, lte, or, isNull } from "drizzle-orm";
 import { runAgent } from "@pixel-org/agent-runner";
-import { db, agents, projects, messages, agentRunRequests } from "../db/index.js";
+import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
 import { getAgentDir, provisionAgentWorkspace } from "../storage/index.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
@@ -61,14 +61,16 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     actorName: agent.name,
     content: [
       "Status: Started",
-      `Objective: Kickoff response for project ${request.projectId}`,
+      `Objective: ${request.reason === "kickoff_created" ? "Kickoff response" : "Assigned thread follow-up"} for project ${request.projectId}`,
       `Run: ${request.id} (${request.reason}, model=${request.model})`,
     ].join("\n"),
   });
 
   try {
     const task = [
-      "A board kickoff thread has been created.",
+      request.reason === "kickoff_created"
+        ? "A board kickoff thread has been created."
+        : "You are waking up to continue work on an assigned thread.",
       `Project ID: ${request.projectId}`,
       `Thread ID: ${request.threadId}`,
       `Reason: ${request.reason}`,
@@ -163,6 +165,35 @@ async function runQueuedRequest(requestId: string): Promise<void> {
   }
 }
 
+async function enqueueRun(params: {
+  projectId: string;
+  threadId: string;
+  agentId: string;
+  reason: "kickoff_created" | "scheduled_awake";
+  idempotencyKey: string;
+}): Promise<void> {
+  const [existing] = await db
+    .select()
+    .from(agentRunRequests)
+    .where(eq(agentRunRequests.idempotencyKey, params.idempotencyKey))
+    .limit(1);
+  if (existing) return;
+
+  const requestId = randomUUID();
+  await db.insert(agentRunRequests).values({
+    id: requestId,
+    projectId: params.projectId,
+    threadId: params.threadId,
+    agentId: params.agentId,
+    reason: params.reason,
+    model: "auto",
+    idempotencyKey: params.idempotencyKey,
+    status: "queued",
+  });
+
+  void runQueuedRequest(requestId);
+}
+
 export async function enqueueKickoffLeadRun(params: {
   projectId: string;
   threadId: string;
@@ -173,25 +204,94 @@ export async function enqueueKickoffLeadRun(params: {
   const leadAgentId = await resolveLeadAgentId(params.preferredAgentId);
   if (!leadAgentId) return;
 
-  const idempotencyKey = `kickoff_spawn:${params.projectId}:${params.threadId}:${leadAgentId}`;
-  const [existing] = await db
-    .select()
-    .from(agentRunRequests)
-    .where(eq(agentRunRequests.idempotencyKey, idempotencyKey))
-    .limit(1);
-  if (existing) return;
-
-  const requestId = randomUUID();
-  await db.insert(agentRunRequests).values({
-    id: requestId,
+  const idempotencyKey = `kickoff_spawn:${params.projectId}:${params.threadId}:${leadAgentId}`;  
+  await enqueueRun({
     projectId: params.projectId,
     threadId: params.threadId,
     agentId: leadAgentId,
     reason: "kickoff_created",
-    model: "auto",
     idempotencyKey,
-    status: "queued",
   });
+}
 
-  void runQueuedRequest(requestId);
+function computeNextAwakeAt(now: Date, intervalMinutes: number): Date {
+  return new Date(now.getTime() + Math.max(3, Math.floor(intervalMinutes)) * 60_000);
+}
+
+async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
+  const ownedThreads = await db.select().from(threads).where(eq(threads.agentId, agentId));
+  let enqueued = 0;
+
+  for (const thread of ownedThreads) {
+    const threadMessages = await db.select().from(messages).where(eq(messages.threadId, thread.id));
+    if (threadMessages.length === 0) continue;
+    const sorted = [...threadMessages].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const latest = sorted[sorted.length - 1];
+    const hasAnyAgentReply = sorted.some((m) => m.agentId === agentId);
+    const actionable = !hasAnyAgentReply || latest.agentId !== agentId || latest.actorType === "board";
+    if (!actionable) continue;
+
+    const [active] = await db
+      .select()
+      .from(agentRunRequests)
+      .where(
+        and(
+          eq(agentRunRequests.threadId, thread.id),
+          eq(agentRunRequests.agentId, agentId),
+          or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running"))
+        )
+      )
+      .limit(1);
+    if (active) continue;
+
+    const idempotencyKey = `awake:${agentId}:${thread.id}:${latest.id}`;
+    await enqueueRun({
+      projectId: thread.projectId,
+      threadId: thread.id,
+      agentId,
+      reason: "scheduled_awake",
+      idempotencyKey,
+    });
+    enqueued += 1;
+  }
+
+  return enqueued;
+}
+
+export async function runAwakeCycle(now = new Date()): Promise<{ dueAgents: number; enqueuedRuns: number }> {
+  const dueAgents = await db
+    .select()
+    .from(agents)
+    .where(
+      and(
+        eq(agents.awakeEnabled, true),
+        or(isNull(agents.nextAwakeAt), lte(agents.nextAwakeAt, now))
+      )
+    );
+
+  let enqueuedRuns = 0;
+  for (const agent of dueAgents) {
+    const nextAt = computeNextAwakeAt(now, agent.awakeIntervalMinutes);
+    await db
+      .update(agents)
+      .set({
+        lastAwakeAt: now,
+        nextAwakeAt: nextAt,
+        updatedAt: now,
+      })
+      .where(eq(agents.id, agent.id));
+    enqueuedRuns += await enqueueAwakeRunsForAgent(agent.id);
+  }
+
+  return { dueAgents: dueAgents.length, enqueuedRuns };
+}
+
+export function startAwakeScheduler(pollMs = 30_000): NodeJS.Timeout {
+  return setInterval(() => {
+    void runAwakeCycle().catch((err) => {
+      console.error("Awake scheduler cycle failed:", err);
+    });
+  }, Math.max(5_000, pollMs));
 }

@@ -14,6 +14,8 @@ const error = ref<string | null>(null);
 
 const name = ref("");
 const role = ref("");
+const awakeEnabled = ref(true);
+const awakeIntervalMinutes = ref(30);
 
 async function load() {
   if (!agentId.value) return;
@@ -23,6 +25,8 @@ async function load() {
     agent.value = await api.getAgent(agentId.value);
     name.value = agent.value.name;
     role.value = agent.value.role;
+    awakeEnabled.value = agent.value.awakeEnabled;
+    awakeIntervalMinutes.value = agent.value.awakeIntervalMinutes;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load agent";
   } finally {
@@ -35,9 +39,13 @@ async function save() {
   saving.value = true;
   error.value = null;
   try {
+    const normalizedAwakeInterval = Math.max(3, Math.floor(Number(awakeIntervalMinutes.value) || 0));
+    awakeIntervalMinutes.value = normalizedAwakeInterval;
     await api.updateAgent(agentId.value, {
       name: name.value.trim(),
       role: role.value.trim(),
+      awakeEnabled: awakeEnabled.value,
+      awakeIntervalMinutes: normalizedAwakeInterval,
     });
     await router.push({ name: "agents" });
   } catch (e) {
@@ -70,6 +78,43 @@ onMounted(load);
         <div class="field">
           <label for="agent-role">Role</label>
           <input id="agent-role" v-model="role" type="text" required placeholder="e.g. CEO, CTO, Engineer" />
+        </div>
+        <div class="field">
+          <label class="checkbox" for="agent-awake-enabled">
+            <input id="agent-awake-enabled" v-model="awakeEnabled" type="checkbox" />
+            <span>Awake scheduler enabled</span>
+          </label>
+          <p class="hint">When enabled, this agent can be picked up by background awake cycles.</p>
+        </div>
+        <div class="field">
+          <label for="agent-awake-interval">Awake interval (minutes)</label>
+          <input
+            id="agent-awake-interval"
+            v-model.number="awakeIntervalMinutes"
+            type="number"
+            min="3"
+            step="1"
+            required
+          />
+          <p class="hint">Minimum 3 minutes. This controls how often the scheduler wakes this agent.</p>
+        </div>
+        <div class="field">
+          <label for="agent-last-awake">Last awake at</label>
+          <input
+            id="agent-last-awake"
+            :value="agent.lastAwakeAt ? new Date(agent.lastAwakeAt).toLocaleString() : 'Never'"
+            type="text"
+            readonly
+          />
+        </div>
+        <div class="field">
+          <label for="agent-next-awake">Next awake at</label>
+          <input
+            id="agent-next-awake"
+            :value="agent.nextAwakeAt ? new Date(agent.nextAwakeAt).toLocaleString() : 'Not scheduled'"
+            type="text"
+            readonly
+          />
         </div>
         <div class="field">
           <label for="agent-config-path">Config pointer (DB `agents.config`)</label>
@@ -129,6 +174,20 @@ h1 {
   font-size: 0.9rem;
   font-weight: 500;
   margin-bottom: 0.35rem;
+}
+.checkbox {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+.checkbox input {
+  width: auto;
+}
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 .field input,
 .field textarea {

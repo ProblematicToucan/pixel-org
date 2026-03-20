@@ -91,7 +91,12 @@ export interface AgentRunRequest {
   updatedAt: string;
 }
 
-export interface ActiveAgentRun extends AgentRunRequest {}
+export interface ActiveAgentRun extends AgentRunRequest {
+  agentName: string;
+  agentRole: string | null;
+  projectName: string;
+  threadTitle: string | null;
+}
 
 export interface VisibleProject {
   projectId: string;
@@ -161,6 +166,11 @@ export const api = {
   getThreadRuns: (threadId: string) =>
     fetchApi<AgentRunRequest[]>("/threads/" + encodeURIComponent(threadId) + "/runs"),
   getActiveRuns: () => fetchApi<ActiveAgentRun[]>("/runs/active"),
+  triggerAwakeCycle: () =>
+    fetchApi<{ success: boolean; dueAgents: number; enqueuedRuns: number }>(
+      "/orchestration/awake/run",
+      { method: "POST" }
+    ),
   postMessage: (
     threadId: string,
     body:

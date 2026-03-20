@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { RouterView } from "vue-router";
+import { RouterLink, RouterView } from "vue-router";
 import { api, type ActiveAgentRun } from "./api";
 
 const activeRuns = ref<ActiveAgentRun[]>([]);
@@ -28,6 +28,11 @@ async function refreshActiveRuns() {
   } finally {
     loadingRuns.value = false;
   }
+}
+
+function runLocationLabel(run: ActiveAgentRun) {
+  const thread = run.threadTitle?.trim() ? run.threadTitle : "Untitled thread";
+  return `${run.projectName} / ${thread}`;
 }
 
 onMounted(async () => {
@@ -73,8 +78,12 @@ onUnmounted(() => {
               <code>{{ run.reason }}</code>
             </div>
             <div class="run-meta">
-              <span>Agent: {{ run.agentId.slice(0, 8) }}...</span>
-              <span>Thread: {{ run.threadId.slice(0, 8) }}...</span>
+              <span>Agent: {{ run.agentName }}<template v-if="run.agentRole"> ({{ run.agentRole }})</template></span>
+              <span>Working on: {{ runLocationLabel(run) }}</span>
+            </div>
+            <div class="run-links">
+              <RouterLink :to="`/threads/${run.threadId}`">Open thread</RouterLink>
+              <RouterLink :to="`/projects/${run.projectId}`">Open project</RouterLink>
             </div>
           </li>
         </ul>
@@ -188,6 +197,19 @@ onUnmounted(() => {
   gap: 0.75rem;
   color: var(--muted);
   font-size: 0.84rem;
+}
+.run-links {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.8rem;
+}
+.run-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.84rem;
+}
+.run-links a:hover {
+  text-decoration: underline;
 }
 .empty {
   margin: 0;
