@@ -20,6 +20,11 @@
       "@esbuild-kit/core-utils": "*",
       "@esbuild-kit/esm-loader": "*",
       "prebuild-install": "*"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "protobufjs"
+    ]
   }
 }
