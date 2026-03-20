@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, lte, or, isNull } from "drizzle-orm";
+import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
 import { runAgent } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
 import { getAgentDir, provisionAgentWorkspace } from "../storage/index.js";
@@ -8,6 +8,14 @@ function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
 }
 
+const MAX_CONCURRENT_AGENT_RUNS = Number(process.env.PIXEL_MAX_CONCURRENT_AGENT_RUNS ?? "4");
+const EFFECTIVE_MAX_CONCURRENT_AGENT_RUNS = Number.isFinite(MAX_CONCURRENT_AGENT_RUNS)
+  ? Math.max(1, Math.floor(MAX_CONCURRENT_AGENT_RUNS))
+  : 4;
+let dispatcherScheduled = false;
+let activeProcessCount = 0;
+const runningAgentIds = new Set<string>();
+
 async function resolveLeadAgentId(preferredAgentId: string): Promise<string | null> {
   const [preferred] = await db.select().from(agents).where(eq(agents.id, preferredAgentId)).limit(1);
   if (preferred?.isLead) return preferred.id;
@@ -15,9 +23,75 @@ async function resolveLeadAgentId(preferredAgentId: string): Promise<string | nu
   return lead?.id ?? null;
 }
 
-async function runQueuedRequest(requestId: string): Promise<void> {
+function scheduleQueueDispatcher(): void {
+  if (dispatcherScheduled) return;
+  dispatcherScheduled = true;
+  setTimeout(() => {
+    dispatcherScheduled = false;
+    void drainQueuedRequests().catch((err) => {
+      console.error("Queue dispatcher failed:", err);
+    });
+  }, 0);
+}
+
+async function tryStartNextQueuedRequest(): Promise<boolean> {
+  if (activeProcessCount >= EFFECTIVE_MAX_CONCURRENT_AGENT_RUNS) return false;
+
+  const queued = await db
+    .select({
+      id: agentRunRequests.id,
+      agentId: agentRunRequests.agentId,
+    })
+    .from(agentRunRequests)
+    .where(eq(agentRunRequests.status, "queued"))
+    .orderBy(asc(agentRunRequests.createdAt))
+    .limit(50);
+  if (queued.length === 0) return false;
+
+  for (const candidate of queued) {
+    if (runningAgentIds.has(candidate.agentId)) continue;
+
+    const now = new Date();
+    const claimed = await db
+      .update(agentRunRequests)
+      .set({
+        status: "running",
+        startedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(agentRunRequests.id, candidate.id), eq(agentRunRequests.status, "queued")))
+      .returning();
+
+    if (claimed.length === 0) continue;
+
+    activeProcessCount += 1;
+    runningAgentIds.add(candidate.agentId);
+    void runQueuedRequest(candidate.id, candidate.agentId);
+    return true;
+  }
+
+  return false;
+}
+
+async function drainQueuedRequests(): Promise<void> {
+  while (
+    activeProcessCount < EFFECTIVE_MAX_CONCURRENT_AGENT_RUNS &&
+    (await tryStartNextQueuedRequest())
+  ) {
+    // keep draining until no additional request can be claimed.
+  }
+}
+
+async function runQueuedRequest(requestId: string, claimedAgentId?: string): Promise<void> {
   const [request] = await db.select().from(agentRunRequests).where(eq(agentRunRequests.id, requestId)).limit(1);
-  if (!request) return;
+  if (!request) {
+    if (claimedAgentId) {
+      runningAgentIds.delete(claimedAgentId);
+      activeProcessCount = Math.max(0, activeProcessCount - 1);
+      scheduleQueueDispatcher();
+    }
+    return;
+  }
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, request.agentId)).limit(1);
   const [project] = await db.select().from(projects).where(eq(projects.id, request.projectId)).limit(1);
@@ -47,15 +121,6 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     role: agent.role,
     config: agent.config,
   });
-
-  await db
-    .update(agentRunRequests)
-    .set({
-      status: "running",
-      startedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(agentRunRequests.id, request.id));
 
   const beforeStartMessages = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
   const baselineAgentMessageCount = beforeStartMessages.filter((m) => m.agentId === agent.id).length;
@@ -197,6 +262,11 @@ async function runQueuedRequest(requestId: string): Promise<void> {
         `Error: ${errMsg}`,
       ].join("\n"),
     });
+  } finally {
+    const ownerAgentId = claimedAgentId ?? request.agentId;
+    runningAgentIds.delete(ownerAgentId);
+    activeProcessCount = Math.max(0, activeProcessCount - 1);
+    scheduleQueueDispatcher();
   }
 }
 
@@ -226,7 +296,7 @@ async function enqueueRun(params: {
     status: "queued",
   });
 
-  void runQueuedRequest(requestId);
+  scheduleQueueDispatcher();
 }
 
 async function enqueuePendingFollowupIfNeeded(request: {
