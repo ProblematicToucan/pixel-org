@@ -4,7 +4,7 @@
 
 **Context (from agent transcripts):**
 - Backend: agents, projects, threads, messages; visible-work; UUIDs.
-- Agent CLI runs with `--workspace` = agent dir (where `./.agents/mcp.json` and `./.agents/skills/` live).
+- Agent CLI runs with `--workspace` = agent dir (where `./.cursor/mcp.json` or `./.claude/mcp.json`, plus `./.agents/skills/`, live).
 - We want a single, consistent way for each agent to: record work, read context (tickets/comments, goals), and get visible work — without teaching the agent “call this HTTP endpoint” in a skill.
 
 ---
@@ -16,7 +16,7 @@
 | **Agent experience** | Agent must read a skill that says “call GET /threads/… with PIXEL_BACKEND_URL”. Easy to get wrong (URL, body, auth). | Agent sees **tools** (e.g. `pixel_list_my_threads`, `pixel_post_message`). Same pattern as other MCP tools (Notion, browser). |
 | **Discovery** | Skill text + env vars. | Tools listed by MCP; schema (args, types) is explicit. |
 | **Auditability** | All calls go to backend; we can log. | All calls still go to backend (MCP server calls backend); we can log in backend or in MCP server. |
-| **Cursor/Claude integration** | No first-class integration; agent “decides” to HTTP. | MCP is first-class: one entry in `./.agents/mcp.json`; agent uses tools like any other MCP. |
+| **Cursor/Claude integration** | No first-class integration; agent “decides” to HTTP. | MCP is first-class: one entry in `./.cursor/mcp.json` or `./.claude/mcp.json`; agent uses tools like any other MCP. |
 
 So: **MCP gives a cleaner contract (tools + schema) and better integration with the CLI**, while we keep the same backend and same audit trail.
 
@@ -34,7 +34,7 @@ Reasons:
    Keeping them separate avoids mixing HTTP API with MCP protocol in one process.
 
 2. **Deployment flexibility**  
-- MCP server is typically run as a **stdio** process **spawned by the IDE/CLI** (see agent’s `./.agents/mcp.json`).  
+- MCP server is typically run as a **stdio** process **spawned by the IDE/CLI** (see agent’s `./.cursor/mcp.json` or `./.claude/mcp.json`).
    - That process only needs: env (agent id, backend URL) and network access to the backend.  
    - Backend can stay “just REST”; no need to run MCP inside the same Node process.
 
@@ -61,13 +61,13 @@ packages/
 ## 3. Transport: stdio vs HTTP
 
 - **stdio**  
-- Cursor/Claude CLI spawn the MCP server from `./.agents/mcp.json` (e.g. `node path/to/pixel-mcp-server.js`).  
-- Env can be set in `./.agents/mcp.json` or by the orchestrator before starting the agent.  
+- Cursor/Claude CLI spawn the MCP server from `./.cursor/mcp.json` or `./.claude/mcp.json` (e.g. `node path/to/pixel-mcp-server.js`).
+- Env can be set in those per-agent MCP files or by the orchestrator before starting the agent.
   - One process per “agent session”; no extra port.  
   **Recommendation: use stdio** so each agent run gets its own MCP server process with that agent’s identity (env).
 
 - **HTTP/SSE**  
-- Backend (or a separate service) would expose an MCP endpoint; `./.agents/mcp.json` would point to a URL.  
+- Backend (or a separate service) would expose an MCP endpoint; `./.cursor/mcp.json` / `./.claude/mcp.json` would point to a URL.
   - You’d need to pass “which agent is calling” on each request (header/token).  
   - Possible later if you want a single long-lived MCP service; for “agent talks to our backend,” stdio is simpler.
 
@@ -142,10 +142,9 @@ Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL
    Example (conceptual):
 
    ```json
-   {
-     "mcp": [
-       {
-         "name": "pixel-backend",
+  {
+    "mcpServers": {
+      "pixel-backend": {
          "command": "node",
          "args": ["/absolute/path/to/packages/pixel-mcp-server/dist/index.js"],
          "env": {
@@ -153,7 +152,7 @@ Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL
            "PIXEL_AGENT_ID": "<filled by orchestrator or script>"
          }
        }
-     ]
+    }
    }
    ```
 
@@ -189,7 +188,7 @@ Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL
    - No change for v1. Optional: add logging or a middleware that logs “request from MCP” (e.g. User-Agent or header) for audit.
 
 4. **Agent provisioning**
-   - When creating an agent (DB + `ensureAgentDir`), write or update `./.agents/mcp.json` in the agent dir with the Pixel MCP server entry and `PIXEL_AGENT_ID` (and optionally `PIXEL_BACKEND_URL` if not global).
+   - When creating an agent (DB + `ensureAgentDir`), write or update `./.cursor/mcp.json` (or `./.claude/mcp.json`) in the agent dir with the Pixel MCP server entry and `PIXEL_AGENT_ID` (and optionally `PIXEL_BACKEND_URL` if not global).
 
 5. **Docs**
    - Update `docs/visibility-and-reviews.md` (or a new doc) to say: “Agents interact with the backend via the Pixel MCP server (tools), not by calling the REST API directly.”

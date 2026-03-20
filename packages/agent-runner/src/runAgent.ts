@@ -10,7 +10,7 @@ const BACKEND_URL_ENV_KEY = "PIXEL_BACKEND_URL";
  * Invokes the configured agent CLI with the given role and task.
  * Caller (orchestrator) is responsible for choosing provider, role, and task.
  * If visibleWork is provided (e.g. from GET /agents/:id/visible-work), the CLI can read those artifact paths to review report work.
- * If agentId/backendUrl are provided, the Pixel MCP server (in agent's mcp.json) can use them to talk to the backend.
+ * If agentId/backendUrl are provided, the Pixel MCP server (in .cursor/.claude mcp.json) can use them to talk to the backend.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
   const { provider, role, task, cwd = process.cwd(), timeoutMs, visibleWork, agentId, backendUrl, env = {} } = options;

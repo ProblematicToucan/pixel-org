@@ -40,9 +40,25 @@ export function getAgentDir(agent: { id: string; role: string }): string {
   return path.join(root, dirName);
 }
 
-/** Full path: agents/{agentDirName}/mcp.json (MCP config – one per agent, shared across projects). */
+/** Full path: agents/{agentDirName}/.cursor/mcp.json or .claude/mcp.json (MCP config per agent). */
 export function getMcpConfigPath(agent: { id: string; role: string }): string {
-  return path.join(getAgentDir(agent), ".agents", "mcp.json");
+  const cursorPath = path.join(getAgentDir(agent), ".cursor", "mcp.json");
+  const claudePath = path.join(getAgentDir(agent), ".claude", "mcp.json");
+  if (fs.existsSync(cursorPath)) return cursorPath;
+  if (fs.existsSync(claudePath)) return claudePath;
+  return cursorPath;
+}
+
+/** Full paths for both supported per-agent MCP config files. */
+export function getAllMcpConfigPaths(agent: { id: string; role: string }): {
+  cursorPath: string;
+  claudePath: string;
+} {
+  const base = getAgentDir(agent);
+  return {
+    cursorPath: path.join(base, ".cursor", "mcp.json"),
+    claudePath: path.join(base, ".claude", "mcp.json"),
+  };
 }
 
 /** Full path: agents/{agentDirName}/.agents/skills/ (skills config – one per agent, shared across projects). */
@@ -71,20 +87,28 @@ export function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-/** Ensures agent dir + .agents/mcp.json + .agents/skills/. */
+/** Ensures agent dir + .cursor/.claude mcp.json + .agents/skills/. */
 export function ensureAgentDir(agent: { id: string; role: string }): string {
   const agentDir = getAgentDir(agent);
   const skillsDir = getSkillsDir(agent);
-  const mcpPath = getMcpConfigPath(agent);
+  const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
+  const preferredPath = getMcpConfigPath(agent);
+  const legacyMcpPath = path.join(agentDir, ".agents", "mcp.json");
+  const seedPath = fs.existsSync(preferredPath)
+    ? preferredPath
+    : (fs.existsSync(legacyMcpPath) ? legacyMcpPath : null);
 
-  // Cursor/Claude agent CLIs commonly expect `./.agents` under the workspace.
-  ensureDir(path.dirname(mcpPath));
+  // Keep both config files present so either CLI can run from the same workspace.
+  ensureDir(path.dirname(cursorPath));
+  ensureDir(path.dirname(claudePath));
   ensureDir(skillsDir);
-  if (!fs.existsSync(mcpPath)) {
-    fs.writeFileSync(
-      mcpPath,
-      JSON.stringify({ mcp: [], comment: "MCP config for this agent" }, null, 2)
-    );
+  if (seedPath) {
+    if (!fs.existsSync(cursorPath)) fs.copyFileSync(seedPath, cursorPath);
+    if (!fs.existsSync(claudePath)) fs.copyFileSync(seedPath, claudePath);
+  } else {
+    const emptyConfig = JSON.stringify({ mcpServers: {} }, null, 2);
+    if (!fs.existsSync(cursorPath)) fs.writeFileSync(cursorPath, emptyConfig);
+    if (!fs.existsSync(claudePath)) fs.writeFileSync(claudePath, emptyConfig);
   }
   return agentDir;
 }
@@ -142,15 +166,15 @@ export function writeAgentsMd(agent: AgentForProvision): void {
   fs.writeFileSync(p, renderLeadOrchestratorAgentsMd(agent), "utf-8");
 }
 
-/** Write .agents/mcp.json with Pixel MCP server entry (absolute path, env for this agent). */
+/** Write .cursor/.claude mcp.json with Pixel MCP server entry (absolute path, env for this agent). */
 export function writeMcpJson(agent: { id: string; role: string }): void {
-  const mcpPath = getMcpConfigPath(agent);
-  ensureDir(path.dirname(mcpPath));
+  const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
+  ensureDir(path.dirname(cursorPath));
+  ensureDir(path.dirname(claudePath));
   const serverPath = getPixelMcpServerPath();
   const payload = {
-    mcp: [
-      {
-        name: "pixel-backend",
+    mcpServers: {
+      "pixel-backend": {
         command: "node",
         args: [serverPath],
         env: {
@@ -158,10 +182,11 @@ export function writeMcpJson(agent: { id: string; role: string }): void {
           PIXEL_AGENT_ID: agent.id,
         },
       },
-    ],
-    comment: "MCP config for this agent",
+    },
   };
-  fs.writeFileSync(mcpPath, JSON.stringify(payload, null, 2), "utf-8");
+  const content = JSON.stringify(payload, null, 2);
+  fs.writeFileSync(cursorPath, content, "utf-8");
+  fs.writeFileSync(claudePath, content, "utf-8");
 }
 
 /** Copy pixel-backend skill into agent .agents/skills/pixel-backend/. */
@@ -177,7 +202,7 @@ export function copyPixelBackendSkill(agent: { id: string; role: string }): void
 }
 
 /**
- * Full provisioning: ensure dir, write AGENTS.md, .agents/mcp.json, and copy pixel-backend skill.
+ * Full provisioning: ensure dir, write AGENTS.md, mcp.json, and copy pixel-backend skill.
  * Call after creating/updating an agent so the CLI has persona + MCP + skills.
  */
 export function provisionAgentWorkspace(agent: AgentForProvision): string {

@@ -10,7 +10,7 @@ MCP server that exposes the Pixel backend as tools for the agent CLI. Includes t
 - **PIXEL_MEM0_HISTORY_DB** (optional) – SQLite path for Mem0 OSS history (persistence across restarts).
 - **MEM0_EMBED_MODEL**, **MEM0_LLM_MODEL**, **MEM0_VECTOR_COLLECTION** (optional) – Overrides for OSS embedder, LLM, and in-memory collection name.
 
-Set these in the agent’s `./.agents/mcp.json` (or via env) before starting the server.
+Set these in the agent’s `./.cursor/mcp.json` (or `./.claude/mcp.json`, or via env) before starting the server.
 
 ## Tools
 
@@ -39,7 +39,7 @@ Use it by copying this `skills/` directory into each agent’s skills location (
 
 ## Running
 
-**Stdio (for agent `./.agents/mcp.json`):**
+**Stdio (for agent `./.cursor/mcp.json` or `./.claude/mcp.json`):**
 
 ```bash
 pnpm run build && node dist/main.js
@@ -61,13 +61,12 @@ pnpm run dev
 # Watches app build and runs server with tsx; use --http in main.ts or pass via env if needed
 ```
 
-## Agent `./.agents/mcp.json` example
+## Agent `./.cursor/mcp.json` example
 
 ```json
 {
-  "mcp": [
-    {
-      "name": "pixel-backend",
+  "mcpServers": {
+    "pixel-backend": {
       "command": "node",
       "args": ["/absolute/path/to/packages/pixel-mcp-server/dist/main.js"],
       "env": {
@@ -76,7 +75,7 @@ pnpm run dev
         "OPENAI_API_KEY": "<optional: for Mem0 OSS memory tools>"
       }
     }
-  ]
+  }
 }
 ```
 
