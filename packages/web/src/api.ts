@@ -94,14 +94,14 @@ export const api = {
   getProjects: () => fetchApi<Project[]>("/projects"),
   getProject: (id: string) =>
     fetchApi<Project>("/projects/" + encodeURIComponent(id)),
-  createProject: (body: { name: string; slug: string }) =>
+  createProject: (body: { name: string }) =>
     fetchApi<{ success: boolean; name: string; slug: string }>("/projects", {
       method: "POST",
       body: JSON.stringify(body),
     }),
   updateProject: (
     id: string,
-    body: { name?: string; slug?: string; goals?: string | null }
+    body: { name?: string; goals?: string | null }
   ) =>
     fetchApi<{ success: boolean }>("/projects/" + encodeURIComponent(id), {
       method: "PATCH",

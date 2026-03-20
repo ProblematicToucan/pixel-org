@@ -23,6 +23,17 @@ const port = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json());
 
+function buildProjectSlug(name: string): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "project";
+  const randomText = Math.random().toString(36).slice(2, 6);
+  const randomNumber = Math.floor(1000 + Math.random() * 9000);
+  return `${base}-${randomText}-${randomNumber}`;
+}
+
 function enrichAgentForResponse(agent: typeof agents.$inferSelect) {
   return {
     ...agent,
@@ -178,13 +189,15 @@ app.get("/projects/:id", async (req, res) => {
 
 app.post("/projects", async (req, res) => {
   try {
-    const { name, slug } = req.body;
-    if (!name || !slug || typeof name !== "string" || typeof slug !== "string") {
-      res.status(400).json({ error: "name and slug required" });
+    const { name } = req.body;
+    if (!name || typeof name !== "string") {
+      res.status(400).json({ error: "name is required" });
       return;
     }
-    await db.insert(projects).values({ name: name.trim(), slug: slug.trim() });
-    res.status(201).json({ success: true, name: name.trim(), slug: slug.trim() });
+    const cleanName = name.trim();
+    const cleanSlug = buildProjectSlug(cleanName);
+    await db.insert(projects).values({ name: cleanName, slug: cleanSlug });
+    res.status(201).json({ success: true, name: cleanName, slug: cleanSlug });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create project" });
@@ -194,14 +207,13 @@ app.post("/projects", async (req, res) => {
 app.patch("/projects/:id", async (req, res) => {
   try {
     const id = req.params.id?.trim();
-    const { name, slug, goals } = req.body;
+    const { name, goals } = req.body;
     if (!id) {
       res.status(400).json({ error: "Invalid project id" });
       return;
     }
-    const updates: { name?: string; slug?: string; goals?: string | null } = {};
+    const updates: { name?: string; goals?: string | null } = {};
     if (typeof name === "string") updates.name = name.trim();
-    if (typeof slug === "string") updates.slug = slug.trim();
     if (goals !== undefined) updates.goals = goals === null || goals === "" ? null : String(goals).trim();
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: "No valid fields to update" });

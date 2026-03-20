@@ -70,24 +70,23 @@ export function createServer(): McpServer {
   server.registerTool(
     "pixel_create_project",
     {
-      description: "Create a new project. Requires name and slug.",
+      description: "Create a new project. Requires name; slug is auto-generated and read-only.",
       inputSchema: z.object({
         name: z.string().describe("Project display name"),
-        slug: z.string().describe("URL-safe slug"),
       }),
     },
-    async (args: { name?: string; slug?: string }): Promise<CallToolResult> => {
+    async (args: { name?: string }): Promise<CallToolResult> => {
       const name = args?.name ?? "";
-      const slug = args?.slug ?? "";
-      if (!name || !slug) {
+      if (!name) {
         return {
-          content: [{ type: "text", text: "Error: name and slug are required" }],
+          content: [{ type: "text", text: "Error: name is required" }],
           isError: true,
         };
       }
       try {
-        await backend.createProject(name, slug);
-        return { content: [{ type: "text", text: `Created project "${name}" (${slug})` }] };
+        const result = await backend.createProject(name);
+        const createdSlug = result.slug || "(auto-generated)";
+        return { content: [{ type: "text", text: `Created project "${name}" (${createdSlug})` }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };

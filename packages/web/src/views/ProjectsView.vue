@@ -7,7 +7,6 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const creating = ref(false);
 const newName = ref("");
-const newSlug = ref("");
 
 async function load() {
   loading.value = true;
@@ -23,14 +22,12 @@ async function load() {
 
 async function createProject() {
   const name = newName.value.trim();
-  const slug = newSlug.value.trim();
-  if (!name || !slug) return;
+  if (!name) return;
   creating.value = true;
   error.value = null;
   try {
-    await api.createProject({ name, slug });
+    await api.createProject({ name });
     newName.value = "";
-    newSlug.value = "";
     await load();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to create project";
@@ -49,8 +46,7 @@ onMounted(load);
 
     <div class="create-form">
       <input v-model="newName" type="text" placeholder="Project name" class="input" />
-      <input v-model="newSlug" type="text" placeholder="Slug (e.g. project_1)" class="input" />
-      <button type="button" class="btn" :disabled="creating || !newName.trim() || !newSlug.trim()" @click="createProject">
+      <button type="button" class="btn" :disabled="creating || !newName.trim()" @click="createProject">
         {{ creating ? "Creating…" : "Create" }}
       </button>
     </div>

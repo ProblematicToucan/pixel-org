@@ -12,7 +12,7 @@ So: **project → threads (each = one agent’s work) → messages (any agent ca
 
 ## API
 
-- **Projects:** `GET /projects`, `GET /projects/:id`, `POST /projects` (body: `name`, `slug`), `PATCH /projects/:id` (body: optional `name`, `slug`, `goals`). Projects have an optional **goals** field (user-defined objectives; Option B).
+- **Projects:** `GET /projects`, `GET /projects/:id`, `POST /projects` (body: `name`; slug is auto-generated), `PATCH /projects/:id` (body: optional `name`, `goals`). Projects have an optional **goals** field (user-defined objectives; Option B).
 - **Threads:** `GET /projects/:id/threads`, `POST /projects/:id/threads` (body: `agentId`, optional `title`). Creating a thread = “Engineer opened work on this project.”
 - **Messages:** `GET /threads/:id/messages`, `POST /threads/:id/messages` (body: `agentId`, `content`). Any agent posts to the thread to discuss.
 

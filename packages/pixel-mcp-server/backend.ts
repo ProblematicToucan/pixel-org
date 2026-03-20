@@ -111,8 +111,8 @@ export async function updateProjectGoals(projectId: string, goals: string | null
   });
 }
 
-export async function createProject(name: string, slug: string): Promise<{ success: boolean }> {
-  return post("/projects", { name, slug });
+export async function createProject(name: string): Promise<{ success: boolean; slug?: string }> {
+  return post("/projects", { name });
 }
 
 export async function listThreads(projectId: string): Promise<
