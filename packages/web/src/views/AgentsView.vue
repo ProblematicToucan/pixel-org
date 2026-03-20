@@ -137,10 +137,12 @@ h1 {
 }
 .badge.lead {
   font-size: 0.7rem;
-  padding: 0.15rem 0.4rem;
-  background: var(--accent);
-  color: var(--bg);
+  padding: 0.15rem 0.45rem;
+  background: linear-gradient(135deg, #a855f7 0%, #3b82f6 100%);
+  color: #ffffff;
   border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 6px rgba(59, 130, 246, 0.28);
 }
 .agent-meta {
   margin-top: 0.35rem;
