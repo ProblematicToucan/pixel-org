@@ -17,6 +17,26 @@ const newAgentId = ref("");
 const BOARD_OPTION = "__board__";
 let fallbackPollTimer: number | null = null;
 let stream: EventSource | null = null;
+const expandedRunKeys = ref<Record<string, boolean>>({});
+const selectedRunEventIds = ref<Record<string, string>>({});
+
+type RunEvent = {
+  message: Message;
+  statusLabel: string | null;
+};
+
+type TimelineItem =
+  | { kind: "message"; key: string; message: Message }
+  | {
+      kind: "run";
+      key: string;
+      runId: string;
+      author: string;
+      events: RunEvent[];
+      latestMessage: Message;
+      latestStatus: string;
+      preview: string;
+    };
 
 async function loadThreadAndMessages(options?: { background?: boolean }) {
   if (!threadId.value) return;
@@ -96,6 +116,173 @@ function messageAuthor(m: Message) {
   return "Unknown agent";
 }
 
+function parseRunId(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("run:"));
+  if (!line) return null;
+  const body = line.slice(4).trim();
+  if (!body) return null;
+  const idx = body.indexOf(" ");
+  return idx === -1 ? body : body.slice(0, idx).trim();
+}
+
+function parseStatus(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("status:"));
+  if (!line) return null;
+  return line.slice(7).trim() || null;
+}
+
+function titleCaseStatus(status: string | null): string {
+  if (!status) return "Update";
+  return status
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function runPreview(content: string): string {
+  const lines = content
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const line of lines) {
+    const normalized = line.toLowerCase();
+    if (
+      normalized.startsWith("status:") ||
+      normalized.startsWith("run:") ||
+      normalized.startsWith("objective:") ||
+      normalized.startsWith("actions:") ||
+      normalized.startsWith("next:") ||
+      normalized.startsWith("reason:") ||
+      normalized.startsWith("error:")
+    ) {
+      continue;
+    }
+    return line;
+  }
+  return lines[0] || "No additional details.";
+}
+
+function isInProgressStatus(status: string | null): boolean {
+  if (!status) return false;
+  return status.trim().toLowerCase() === "in progress";
+}
+
+function isTerminalStatus(status: string | null): boolean {
+  if (!status) return false;
+  const normalized = status.trim().toLowerCase();
+  return normalized === "completed" || normalized === "blocked";
+}
+
+const messageRunKeys = computed<Record<string, string>>(() => {
+  const runKeyByMessageId: Record<string, string> = {};
+  const activeRunByAgent: Record<string, string> = {};
+
+  for (const message of messages.value) {
+    if (message.actorType !== "agent" || !message.agentId) continue;
+
+    const explicitRunId = parseRunId(message.content);
+    const status = parseStatus(message.content);
+
+    if (explicitRunId) {
+      const key = `run:${explicitRunId}`;
+      runKeyByMessageId[message.id] = key;
+      activeRunByAgent[message.agentId] = key;
+      if (isTerminalStatus(status)) {
+        delete activeRunByAgent[message.agentId];
+      }
+      continue;
+    }
+
+    const activeKey = activeRunByAgent[message.agentId];
+    if (activeKey && (isInProgressStatus(status) || isTerminalStatus(status))) {
+      runKeyByMessageId[message.id] = activeKey;
+      if (isTerminalStatus(status)) {
+        delete activeRunByAgent[message.agentId];
+      }
+    }
+  }
+
+  return runKeyByMessageId;
+});
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  const items: TimelineItem[] = [];
+  let i = 0;
+  while (i < messages.value.length) {
+    const current = messages.value[i];
+    const runKey = messageRunKeys.value[current.id];
+    if (!runKey) {
+      items.push({ kind: "message", key: current.id, message: current });
+      i += 1;
+      continue;
+    }
+
+    const runEvents: RunEvent[] = [];
+    let j = i;
+    while (j < messages.value.length) {
+      const candidate = messages.value[j];
+      if (messageRunKeys.value[candidate.id] !== runKey) break;
+      runEvents.push({
+        message: candidate,
+        statusLabel: titleCaseStatus(parseStatus(candidate.content)),
+      });
+      j += 1;
+    }
+
+    if (runEvents.length <= 1) {
+      items.push({ kind: "message", key: current.id, message: current });
+      i += 1;
+      continue;
+    }
+
+    const latest = runEvents[runEvents.length - 1].message;
+    const latestStatus = titleCaseStatus(parseStatus(latest.content));
+    const rawRunId = runKey.startsWith("run:") ? runKey.slice(4) : runKey;
+    items.push({
+      kind: "run",
+      key: `${runKey}:${current.id}`,
+      runId: rawRunId,
+      author: messageAuthor(current),
+      events: runEvents,
+      latestMessage: latest,
+      latestStatus,
+      preview: runPreview(latest.content),
+    });
+    i = j;
+  }
+
+  return items;
+});
+
+function isRunExpanded(key: string): boolean {
+  return expandedRunKeys.value[key] === true;
+}
+
+function toggleRunDetails(key: string) {
+  expandedRunKeys.value[key] = !isRunExpanded(key);
+}
+
+function selectedRunEvent(item: Extract<TimelineItem, { kind: "run" }>): RunEvent {
+  const selectedId = selectedRunEventIds.value[item.key];
+  return item.events.find((e) => e.message.id === selectedId) ?? item.events[item.events.length - 1];
+}
+
+function isRunEventSelected(item: Extract<TimelineItem, { kind: "run" }>, event: RunEvent): boolean {
+  return selectedRunEvent(item).message.id === event.message.id;
+}
+
+function selectRunEvent(item: Extract<TimelineItem, { kind: "run" }>, event: RunEvent) {
+  selectedRunEventIds.value[item.key] = event.message.id;
+}
+
 onMounted(loadThreadAndMessages);
 
 onMounted(() => {
@@ -141,10 +328,44 @@ onUnmounted(() => {
 
       <section class="messages">
         <ul class="message-list">
-          <li v-for="m in messages" :key="m.id" class="message-item">
-            <span class="author">{{ messageAuthor(m) }}</span>
-            <span class="time">{{ new Date(m.createdAt).toLocaleString() }}</span>
-            <p class="content">{{ m.content }}</p>
+          <li v-for="item in timelineItems" :key="item.key" class="message-item">
+            <template v-if="item.kind === 'message'">
+              <span class="author">{{ messageAuthor(item.message) }}</span>
+              <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
+              <p class="content">{{ item.message.content }}</p>
+            </template>
+            <template v-else>
+              <div class="run-header">
+                <span class="author">{{ item.author }}</span>
+                <span class="run-badge">Run</span>
+                <span class="time">{{ new Date(item.latestMessage.createdAt).toLocaleString() }}</span>
+              </div>
+              <div class="status-chips">
+                <button
+                  v-for="event in item.events"
+                  :key="event.message.id"
+                  type="button"
+                  class="status-chip"
+                  :class="{ final: isRunEventSelected(item, event) }"
+                  @click="selectRunEvent(item, event)"
+                >
+                  {{ event.statusLabel || "Update" }}
+                </button>
+              </div>
+              <p class="content">{{ runPreview(selectedRunEvent(item).message.content) }}</p>
+              <button type="button" class="details-toggle" @click="toggleRunDetails(item.key)">
+                {{ isRunExpanded(item.key) ? "Hide details" : "View details" }}
+              </button>
+              <div v-if="isRunExpanded(item.key)" class="run-details">
+                <p class="run-meta">Run ID: {{ item.runId }}</p>
+                <ul class="run-events">
+                  <li>
+                    <span class="event-time">{{ new Date(selectedRunEvent(item).message.createdAt).toLocaleString() }}</span>
+                    <p class="event-content">{{ selectedRunEvent(item).message.content }}</p>
+                  </li>
+                </ul>
+              </div>
+            </template>
           </li>
         </ul>
         <p v-if="!messages.length" class="empty">No messages yet.</p>
@@ -217,6 +438,74 @@ h1 {
 .message-item .content {
   margin: 0.5rem 0 0;
   font-size: 0.95rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.run-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.run-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.status-chip {
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 0.12rem 0.45rem;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.status-chip.final {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.details-toggle {
+  margin-top: 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.run-details {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+.run-meta {
+  margin: 0 0 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.run-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.event-time {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.event-content {
+  margin: 0.15rem 0 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
