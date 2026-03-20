@@ -170,6 +170,16 @@ function runPreview(content: string): string {
   return lines[0] || "No additional details.";
 }
 
+function parseObjective(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("objective:"));
+  if (!line) return null;
+  const value = line.slice("objective:".length).trim();
+  return value || null;
+}
+
 function isInProgressStatus(status: string | null): boolean {
   if (!status) return false;
   return status.trim().toLowerCase() === "in progress";
@@ -283,6 +293,17 @@ function selectRunEvent(item: Extract<TimelineItem, { kind: "run" }>, event: Run
   selectedRunEventIds.value[item.key] = event.message.id;
 }
 
+function isInformationalStartedMessage(message: Message): boolean {
+  if (message.actorType !== "agent") return false;
+  const status = parseStatus(message.content)?.trim().toLowerCase();
+  return status === "started";
+}
+
+function startedInfoSummary(message: Message): string {
+  const objective = parseObjective(message.content);
+  return objective ? `Run started: ${objective}` : "Run started.";
+}
+
 onMounted(loadThreadAndMessages);
 
 onMounted(() => {
@@ -330,9 +351,19 @@ onUnmounted(() => {
         <ul class="message-list">
           <li v-for="item in timelineItems" :key="item.key" class="message-item">
             <template v-if="item.kind === 'message'">
-              <span class="author">{{ messageAuthor(item.message) }}</span>
-              <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
-              <p class="content">{{ item.message.content }}</p>
+              <template v-if="isInformationalStartedMessage(item.message)">
+                <div class="info-row">
+                  <span class="author">{{ messageAuthor(item.message) }}</span>
+                  <span class="run-badge info">Started</span>
+                  <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
+                </div>
+                <p class="content info-content">{{ startedInfoSummary(item.message) }}</p>
+              </template>
+              <template v-else>
+                <span class="author">{{ messageAuthor(item.message) }}</span>
+                <span class="time">{{ new Date(item.message.createdAt).toLocaleString() }}</span>
+                <p class="content">{{ item.message.content }}</p>
+              </template>
             </template>
             <template v-else>
               <div class="run-header">
@@ -446,12 +477,20 @@ h1 {
   align-items: center;
   gap: 0.5rem;
 }
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 .run-badge {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.1rem 0.45rem;
   font-size: 0.72rem;
   color: var(--muted);
+}
+.run-badge.info {
+  background: transparent;
 }
 .status-chips {
   display: flex;
@@ -508,6 +547,10 @@ h1 {
   margin: 0.15rem 0 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.info-content {
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 .empty {
   color: var(--muted);
