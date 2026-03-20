@@ -21,7 +21,14 @@ type Project = {
     id: string;
     agentId: string;
     title: string | null;
-    messages: { id: string; agentId: string; content: string }[];
+    messages: {
+      id: string;
+      agentId: string | null;
+      actorType: "agent" | "board";
+      actorName: string | null;
+      content: string;
+      createdAt: string;
+    }[];
   }[];
 };
 
@@ -45,7 +52,7 @@ function render(context: { projects: Project[] }): string {
         const msgHtml = (t.messages ?? [])
           .map(
             (m) =>
-              `<div class="message"><span class="meta">${escapeHtml(m.agentId)}</span><div>${escapeHtml(m.content)}</div></div>`
+              `<div class="message"><span class="meta">${escapeHtml(m.actorName || m.agentId || (m.actorType === "board" ? "Board" : "Agent"))}</span><div>${escapeHtml(m.content)}</div></div>`
           )
           .join("");
         return `<div class="thread"><div class="title">${escapeHtml(title)}</div><div class="messages">${msgHtml || '<p class="empty">No messages</p>'}</div></div>`;

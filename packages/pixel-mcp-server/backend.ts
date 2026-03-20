@@ -151,7 +151,15 @@ export async function createThread(
 }
 
 export async function listMessages(threadId: string): Promise<
-  { id: string; threadId: string; agentId: string; content: string }[]
+  {
+    id: string;
+    threadId: string;
+    agentId: string | null;
+    actorType: "agent" | "board";
+    actorName: string | null;
+    content: string;
+    createdAt: string;
+  }[]
 > {
   return get(`/threads/${encodeURIComponent(threadId)}/messages`);
 }

@@ -456,7 +456,14 @@ export function createServer(): McpServer {
             id: string;
             agentId: string;
             title: string | null;
-            messages: { id: string; agentId: string; content: string }[];
+            messages: {
+              id: string;
+              agentId: string | null;
+              actorType: "agent" | "board";
+              actorName: string | null;
+              content: string;
+              createdAt: string;
+            }[];
           }[];
         }[] = [];
 
@@ -472,7 +479,10 @@ export function createServer(): McpServer {
                 messages: msgs.map((m) => ({
                   id: m.id,
                   agentId: m.agentId,
+                  actorType: m.actorType,
+                  actorName: m.actorName,
                   content: m.content,
+                  createdAt: m.createdAt,
                 })),
               };
             })

@@ -18,7 +18,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { eq, or } from "drizzle-orm";
+import { asc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
 
 const app = express();
@@ -496,7 +496,11 @@ app.get("/threads/:id/messages", async (req, res) => {
       res.status(400).json({ error: "Invalid thread id" });
       return;
     }
-    const rows = await db.select().from(messages).where(eq(messages.threadId, threadId));
+    const rows = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.threadId, threadId))
+      .orderBy(asc(messages.createdAt));
     const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
     const [owner] = thread
       ? await db.select().from(agents).where(eq(agents.id, thread.agentId)).limit(1)
@@ -568,8 +572,12 @@ app.post("/threads/:id/messages", async (req, res) => {
       res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
       return;
     }
+    const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
+    if (!thread) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
     if (normalizedActorType === "board" && normalizedActorName && MISSING_AGENT_FALLBACK_RE.test(normalizedActorName)) {
-      const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
       const [owner] = thread
         ? await db.select().from(agents).where(eq(agents.id, thread.agentId)).limit(1)
         : [];
@@ -584,6 +592,17 @@ app.post("/threads/:id/messages", async (req, res) => {
     if (normalizedActorType === "agent" && !normalizedAgentId) {
       res.status(400).json({ error: "agentId is required when actorType is agent" });
       return;
+    }
+    if (normalizedActorType === "agent") {
+      const [resolvedAgent] = await db.select().from(agents).where(eq(agents.id, normalizedAgentId)).limit(1);
+      if (!resolvedAgent) {
+        res.status(400).json({ error: "agentId must refer to a registered agent" });
+        return;
+      }
+      // Canonicalize agent-authored messages to authoritative registry identity.
+      normalizedActorName = resolvedAgent.name;
+    } else if (!normalizedActorName) {
+      normalizedActorName = "Board of Directors";
     }
     const messageId = randomUUID();
     const createdAt = new Date();
