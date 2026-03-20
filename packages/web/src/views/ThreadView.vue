@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { API_BASE, api, type Message, type Thread, type Agent } from "../api";
 
@@ -299,9 +299,20 @@ function standaloneRunStatusLabel(message: Message): string | null {
   return null;
 }
 
-onMounted(loadThreadAndMessages);
+function closeLiveUpdates() {
+  if (fallbackPollTimer != null) {
+    window.clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+  if (stream != null) {
+    stream.close();
+    stream = null;
+  }
+}
 
-onMounted(() => {
+function startLiveUpdates() {
+  closeLiveUpdates();
+  if (!threadId.value) return;
   const streamUrl = `${API_BASE}/threads/${encodeURIComponent(threadId.value)}/stream`;
   stream = new EventSource(streamUrl);
   stream.addEventListener("message", (evt) => {
@@ -320,15 +331,25 @@ onMounted(() => {
       void loadThreadAndMessages({ background: true });
     }, 5000);
   });
+}
+
+watch(
+  threadId,
+  async (nextId, prevId) => {
+    if (!nextId || nextId === prevId) return;
+    selectedRunEventIds.value = {};
+    await loadThreadAndMessages();
+    startLiveUpdates();
+  }
+);
+
+onMounted(async () => {
+  await loadThreadAndMessages();
+  startLiveUpdates();
 });
 
 onUnmounted(() => {
-  if (fallbackPollTimer != null) {
-    window.clearInterval(fallbackPollTimer);
-  }
-  if (stream != null) {
-    stream.close();
-  }
+  closeLiveUpdates();
 });
 </script>
 
