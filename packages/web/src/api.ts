@@ -33,6 +33,7 @@ export interface Agent {
   isLead: boolean;
   parentId: string | null;
   config: string | null;
+  configDisplay?: string | null;
   createdAt: string;
   updatedAt: string;
 }

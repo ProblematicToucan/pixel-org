@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { renderLeadOrchestratorAgentsMd } from "./agent-template.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +107,21 @@ export function getAgentsMdPath(agent: { id: string; role: string }): string {
   return path.join(getAgentDir(agent), "AGENTS.md");
 }
 
+export function getAgentsMdConfigPointer(agent: { id: string; role: string }): string {
+  return getAgentsMdPath(agent);
+}
+
+export function readAgentConfigDisplay(agent: { id: string; role: string; config: string | null }): string | null {
+  const pointer = agent.config?.trim() ?? "";
+  const absolutePath = pointer.startsWith("file://")
+    ? pointer.slice("file://".length)
+    : pointer;
+  if (absolutePath && path.isAbsolute(absolutePath) && fs.existsSync(absolutePath)) {
+    return fs.readFileSync(absolutePath, "utf-8");
+  }
+  return agent.config;
+}
+
 /** Absolute path to Pixel MCP server entry script (repo root relative). */
 export function getPixelMcpServerPath(): string {
   return path.join(getRepoRoot(), "packages", "pixel-mcp-server", "dist", "main.js");
@@ -123,9 +139,7 @@ export type AgentForProvision = { id: string; name: string; role: string; config
 export function writeAgentsMd(agent: AgentForProvision): void {
   const p = getAgentsMdPath(agent);
   ensureDir(path.dirname(p));
-  const header = `# Agent: ${agent.name} (${agent.role})\n\nYou are **${agent.name}**, role **${agent.role}**. Act as this agent in all tasks.\n\n`;
-  const body = agent.config?.trim() ? `## Instructions\n\n${agent.config.trim()}\n` : "";
-  fs.writeFileSync(p, header + body, "utf-8");
+  fs.writeFileSync(p, renderLeadOrchestratorAgentsMd(agent), "utf-8");
 }
 
 /** Write .agents/mcp.json with Pixel MCP server entry (absolute path, env for this agent). */

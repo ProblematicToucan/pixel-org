@@ -14,7 +14,6 @@ const error = ref<string | null>(null);
 
 const name = ref("");
 const role = ref("");
-const config = ref("");
 
 async function load() {
   if (!agentId.value) return;
@@ -24,7 +23,6 @@ async function load() {
     agent.value = await api.getAgent(agentId.value);
     name.value = agent.value.name;
     role.value = agent.value.role;
-    config.value = agent.value.config ?? "";
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load agent";
   } finally {
@@ -40,7 +38,6 @@ async function save() {
     await api.updateAgent(agentId.value, {
       name: name.value.trim(),
       role: role.value.trim(),
-      config: config.value.trim() || null,
     });
     await router.push({ name: "agents" });
   } catch (e) {
@@ -75,12 +72,16 @@ onMounted(load);
           <input id="agent-role" v-model="role" type="text" required placeholder="e.g. CEO, CTO, Engineer" />
         </div>
         <div class="field">
-          <label for="agent-config">Instructions (plain text)</label>
+          <label for="agent-config-path">Config pointer (DB `agents.config`)</label>
+          <input id="agent-config-path" :value="agent.config ?? ''" type="text" readonly />
+        </div>
+        <div class="field">
+          <label for="agent-config-display">AGENTS.md content (display)</label>
           <textarea
-            id="agent-config"
-            v-model="config"
-            rows="12"
-            placeholder="Persona and instructions for this agent. Written into AGENTS.md in the agent workspace."
+            id="agent-config-display"
+            :value="agent.configDisplay ?? ''"
+            rows="16"
+            readonly
           />
         </div>
         <div class="meta">

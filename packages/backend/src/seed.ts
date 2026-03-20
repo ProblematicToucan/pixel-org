@@ -13,7 +13,7 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { agents } from "./db/schema.js";
-import { provisionAgentWorkspace } from "./storage/index.js";
+import { getAgentsMdConfigPointer, provisionAgentWorkspace } from "./storage/index.js";
 
 const EXAMPLE_LEAD_NAME = "Lead";
 
@@ -31,6 +31,10 @@ async function seed() {
       role: existing.role,
       config: existing.config,
     });
+    await db
+      .update(agents)
+      .set({ config: getAgentsMdConfigPointer({ id: existing.id, role: existing.role }) })
+      .where(eq(agents.id, existing.id));
     console.log("Example lead agent already exists; provisioned workspace (AGENTS.md, mcp.json, skills).");
     return;
   }
@@ -56,6 +60,10 @@ async function seed() {
       role: inserted.role,
       config: inserted.config,
     });
+    await db
+      .update(agents)
+      .set({ config: getAgentsMdConfigPointer({ id: inserted.id, role: inserted.role }) })
+      .where(eq(agents.id, inserted.id));
     console.log("Seeded example lead agent:", EXAMPLE_LEAD_NAME, "and provisioned agent dir:", inserted.id + "-" + inserted.role.toLowerCase());
   }
 }

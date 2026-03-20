@@ -10,7 +10,11 @@ import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
-import { provisionAgentWorkspace } from "./storage/index.js";
+import {
+  provisionAgentWorkspace,
+  getAgentsMdConfigPointer,
+  readAgentConfigDisplay,
+} from "./storage/index.js";
 import { eq } from "drizzle-orm";
 
 const app = express();
@@ -19,6 +23,36 @@ const port = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json());
 
+function enrichAgentForResponse(agent: typeof agents.$inferSelect) {
+  return {
+    ...agent,
+    configDisplay: readAgentConfigDisplay({
+      id: agent.id,
+      role: agent.role,
+      config: agent.config,
+    }),
+  };
+}
+
+async function syncAgentConfigPointers(): Promise<void> {
+  const rows = await db.select().from(agents);
+  for (const row of rows) {
+    provisionAgentWorkspace({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      config: row.config,
+    });
+    const pointer = getAgentsMdConfigPointer({ id: row.id, role: row.role });
+    if (row.config !== pointer) {
+      await db
+        .update(agents)
+        .set({ config: pointer, updatedAt: new Date().toISOString() })
+        .where(eq(agents.id, row.id));
+    }
+  }
+}
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "backend" });
 });
@@ -26,7 +60,7 @@ app.get("/health", (_req, res) => {
 app.get("/agents", async (_req, res) => {
   try {
     const rows = await db.select().from(agents);
-    res.json(rows);
+    res.json(rows.map(enrichAgentForResponse));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch agents" });
@@ -45,7 +79,7 @@ app.get("/agents/:id", async (req, res) => {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    res.json(rows[0]);
+    res.json(enrichAgentForResponse(rows[0]));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch agent" });
@@ -78,6 +112,16 @@ app.patch("/agents/:id", async (req, res) => {
         role: updated.role,
         config: updated.config,
       });
+      const configPointer = getAgentsMdConfigPointer({
+        id: updated.id,
+        role: updated.role,
+      });
+      if (updated.config !== configPointer) {
+        await db
+          .update(agents)
+          .set({ config: configPointer, updatedAt: new Date().toISOString() })
+          .where(eq(agents.id, id));
+      }
     }
     res.json({ success: true });
   } catch (err) {
@@ -243,6 +287,13 @@ app.post("/threads/:id/messages", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Backend listening on http://localhost:${port}`);
-});
+syncAgentConfigPointers()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Backend listening on http://localhost:${port}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Failed to sync agent config pointers on startup:", err);
+    process.exit(1);
+  });

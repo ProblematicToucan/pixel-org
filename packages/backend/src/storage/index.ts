@@ -8,6 +8,7 @@ export {
   getMcpConfigPath,
   getSkillsDir,
   getAgentsMdPath,
+  getAgentsMdConfigPointer,
   getPixelMcpServerPath,
   ensureDir,
   ensureAgentDir,
@@ -16,6 +17,7 @@ export {
   writeAgentsMd,
   writeMcpJson,
   copyPixelBackendSkill,
+  readAgentConfigDisplay,
   provisionAgentWorkspace,
 } from "./agents-fs.js";
 export type { AgentForProvision } from "./agents-fs.js";
