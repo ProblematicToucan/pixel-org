@@ -14,9 +14,16 @@ import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.join(__dirname, "..", "drizzle");
+const backendRoot = path.resolve(__dirname, "..");
+const defaultPglitePath = path.join(backendRoot, "data");
 const databaseUrl = process.env.DATABASE_URL?.trim();
 const useExternalPg = Boolean(databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl));
-const pglitePath = useExternalPg ? "./data" : (databaseUrl ?? "./data").replace(/^file:/, "");
+const configuredEmbeddedPath = (databaseUrl ?? "").replace(/^file:/, "").trim();
+const pglitePath = useExternalPg
+  ? defaultPglitePath
+  : configuredEmbeddedPath
+    ? path.resolve(backendRoot, configuredEmbeddedPath)
+    : defaultPglitePath;
 
 if (useExternalPg && databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl });

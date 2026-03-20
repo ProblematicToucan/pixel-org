@@ -31,6 +31,12 @@ async function runQueuedRequest(requestId: string): Promise<void> {
         updatedAt: new Date(),
       })
       .where(eq(agentRunRequests.id, request.id));
+
+    await enqueuePendingFollowupIfNeeded({
+      threadId: request.threadId,
+      projectId: request.projectId,
+      agentId: request.agentId,
+    });
     return;
   }
 
@@ -163,6 +169,11 @@ async function runQueuedRequest(requestId: string): Promise<void> {
         updatedAt: new Date(),
       })
       .where(eq(agentRunRequests.id, request.id));
+    await enqueuePendingFollowupIfNeeded({
+      threadId: request.threadId,
+      projectId: request.projectId,
+      agentId: request.agentId,
+    });
     await db.insert(messages).values({
       threadId: request.threadId,
       agentId: agent.id,
@@ -205,6 +216,41 @@ async function enqueueRun(params: {
   });
 
   void runQueuedRequest(requestId);
+}
+
+async function enqueuePendingFollowupIfNeeded(request: {
+  threadId: string;
+  projectId: string;
+  agentId: string;
+}): Promise<void> {
+  const [thread] = await db.select().from(threads).where(eq(threads.id, request.threadId)).limit(1);
+  if (!thread?.pendingOwnerRun) return;
+  if (thread.agentId !== request.agentId) return;
+
+  const [activeForOwner] = await db
+    .select()
+    .from(agentRunRequests)
+    .where(
+      and(
+        eq(agentRunRequests.agentId, request.agentId),
+        or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running"))
+      )
+    )
+    .limit(1);
+  if (activeForOwner) {
+    await db.update(threads).set({ pendingOwnerRun: true }).where(eq(threads.id, thread.id));
+    return;
+  }
+
+  await db.update(threads).set({ pendingOwnerRun: false }).where(eq(threads.id, request.threadId));
+
+  await enqueueRun({
+    projectId: request.projectId,
+    threadId: request.threadId,
+    agentId: request.agentId,
+    reason: "thread_message",
+    idempotencyKey: `thread_message_followup:${request.projectId}:${request.threadId}:${request.agentId}:${Date.now()}`,
+  });
 }
 
 export async function enqueueKickoffLeadRun(params: {

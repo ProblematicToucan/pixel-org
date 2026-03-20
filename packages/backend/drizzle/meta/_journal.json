@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1773991250253,
-      "tag": "0000_clammy_turbo",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1774080000000,
-      "tag": "0001_board_actor_messages",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1774083600000,
-      "tag": "0002_kickoff_orchestration",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1774090800000,
-      "tag": "0003_run_tracking_columns",
+      "when": 1774020397183,
+      "tag": "0000_clever_meteorite",
       "breakpoints": true
     }
   ]

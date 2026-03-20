@@ -48,6 +48,7 @@ export const threads = pgTable("threads", {
     .notNull()
     .references(() => agents.id),
   title: text("title"),
+  pendingOwnerRun: boolean("pending_owner_run").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
