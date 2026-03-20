@@ -57,7 +57,9 @@ export interface Thread {
 export interface Message {
   id: string;
   threadId: string;
-  agentId: string;
+  agentId: string | null;
+  actorType: "agent" | "board";
+  actorName: string | null;
   content: string;
   createdAt: string;
 }
@@ -114,15 +116,20 @@ export const api = {
     projectId: string,
     body: { agentId: string; title?: string }
   ) =>
-    fetchApi<{ success: boolean; projectId: string; agentId: string }>(
+    fetchApi<{ success: boolean; id: string; projectId: string; agentId: string }>(
       "/projects/" + encodeURIComponent(projectId) + "/threads",
       { method: "POST", body: JSON.stringify(body) }
     ),
 
   getThreadMessages: (threadId: string) =>
     fetchApi<Message[]>("/threads/" + encodeURIComponent(threadId) + "/messages"),
-  postMessage: (threadId: string, body: { agentId: string; content: string }) =>
-    fetchApi<{ success: boolean; threadId: string; agentId: string }>(
+  postMessage: (
+    threadId: string,
+    body:
+      | { content: string; actorType: "board"; actorName?: string }
+      | { content: string; actorType?: "agent"; agentId: string; actorName?: string }
+  ) =>
+    fetchApi<{ success: boolean; threadId: string; actorType: "agent" | "board"; agentId: string | null }>(
       "/threads/" + encodeURIComponent(threadId) + "/messages",
       { method: "POST", body: JSON.stringify(body) }
     ),

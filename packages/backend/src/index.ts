@@ -1,5 +1,6 @@
 import path from "path";
 import { fileURLToPath } from "url";
+import { randomUUID } from "crypto";
 import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -251,12 +252,19 @@ app.post("/projects/:id/threads", async (req, res) => {
       res.status(400).json({ error: "project id and agentId required" });
       return;
     }
+    const threadId = randomUUID();
     await db.insert(threads).values({
+      id: threadId,
       projectId,
       agentId: String(agentId).trim(),
       title: title != null ? String(title).trim() : null,
     });
-    res.status(201).json({ success: true, projectId, agentId: String(agentId).trim() });
+    res.status(201).json({
+      success: true,
+      id: threadId,
+      projectId,
+      agentId: String(agentId).trim(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create thread" });
@@ -282,17 +290,35 @@ app.get("/threads/:id/messages", async (req, res) => {
 app.post("/threads/:id/messages", async (req, res) => {
   try {
     const threadId = req.params.id?.trim();
-    const { agentId, content } = req.body;
-    if (!threadId || agentId == null || content == null) {
-      res.status(400).json({ error: "thread id, agentId, and content required" });
+    const { agentId, content, actorType, actorName } = req.body;
+    const normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
+    const normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
+    const normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
+    if (!threadId || content == null) {
+      res.status(400).json({ error: "thread id and content required" });
+      return;
+    }
+    if (normalizedActorType !== "agent" && normalizedActorType !== "board") {
+      res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
+      return;
+    }
+    if (normalizedActorType === "agent" && !normalizedAgentId) {
+      res.status(400).json({ error: "agentId is required when actorType is agent" });
       return;
     }
     await db.insert(messages).values({
       threadId,
-      agentId: String(agentId).trim(),
+      agentId: normalizedActorType === "agent" ? normalizedAgentId : null,
+      actorType: normalizedActorType,
+      actorName: normalizedActorType === "board" ? (normalizedActorName || "Board") : normalizedActorName,
       content: String(content).trim(),
     });
-    res.status(201).json({ success: true, threadId, agentId: String(agentId).trim() });
+    res.status(201).json({
+      success: true,
+      threadId,
+      actorType: normalizedActorType,
+      agentId: normalizedActorType === "agent" ? normalizedAgentId : null,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to post message" });

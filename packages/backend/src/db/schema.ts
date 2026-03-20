@@ -50,15 +50,15 @@ export const threads = pgTable("threads", {
 export type Thread = typeof threads.$inferSelect;
 export type NewThread = typeof threads.$inferInsert;
 
-/** Message = one reply in a thread. Any agent can post. */
+/** Message = one reply in a thread. Sender can be an agent or Board. */
 export const messages = pgTable("messages", {
   id: uuid(),
   threadId: text("thread_id")
     .notNull()
     .references(() => threads.id),
-  agentId: text("agent_id")
-    .notNull()
-    .references(() => agents.id),
+  agentId: text("agent_id").references(() => agents.id),
+  actorType: text("actor_type").notNull().default("agent"),
+  actorName: text("actor_name"),
   content: text("content").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

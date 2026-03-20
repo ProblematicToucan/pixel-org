@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS "agents" (
 CREATE TABLE IF NOT EXISTS "messages" (
 	"id" text PRIMARY KEY NOT NULL,
 	"thread_id" text NOT NULL,
-	"agent_id" text NOT NULL,
+	"agent_id" text,
+	"actor_type" text DEFAULT 'agent' NOT NULL,
+	"actor_name" text,
 	"content" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );

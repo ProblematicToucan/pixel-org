@@ -14,6 +14,36 @@ const error = ref<string | null>(null);
 const creating = ref(false);
 const newTitle = ref("");
 const newAgentId = ref("");
+const goalsDraft = ref("");
+const goalsSaving = ref(false);
+const goalsNotice = ref<string | null>(null);
+
+function getBoardAgentId() {
+  const lead = agents.value.find((agent) => agent.isLead);
+  return lead?.id ?? agents.value[0]?.id ?? null;
+}
+
+function hasBoardKickoffThread() {
+  return threads.value.some((thread) => (thread.title ?? "").trim().toLowerCase() === "board kickoff");
+}
+
+async function maybeCreateBoardKickoff(goals: string) {
+  const boardAgentId = getBoardAgentId();
+  if (!projectId.value || !goals || !boardAgentId || hasBoardKickoffThread()) return false;
+
+  const created = await api.createThread(projectId.value, {
+    agentId: boardAgentId,
+    title: "Board kickoff",
+  });
+
+  await api.postMessage(created.id, {
+    actorType: "board",
+    actorName: "Board of Directors",
+    content: `Project goals:\n\n${goals}`,
+  });
+
+  return true;
+}
 
 async function load() {
   if (!projectId.value) return;
@@ -28,12 +58,51 @@ async function load() {
     project.value = p;
     threads.value = t;
     agents.value = a;
+    goalsDraft.value = p.goals ?? "";
     if (agents.value.length && !newAgentId.value) newAgentId.value = agents.value[0].id;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load";
   } finally {
     loading.value = false;
   }
+}
+
+async function saveGoals() {
+  if (!projectId.value || !project.value) return;
+  goalsSaving.value = true;
+  goalsNotice.value = null;
+  try {
+    const hadGoalsBefore = Boolean(project.value.goals?.trim());
+    const nextGoals = goalsDraft.value.trim();
+    await api.updateProject(projectId.value, {
+      goals: nextGoals ? nextGoals : null,
+    });
+    project.value = {
+      ...project.value,
+      goals: nextGoals ? nextGoals : null,
+    };
+    goalsDraft.value = nextGoals;
+    const shouldCreateKickoff = !hadGoalsBefore && Boolean(nextGoals);
+    let kickoffCreated = false;
+    if (shouldCreateKickoff) {
+      kickoffCreated = await maybeCreateBoardKickoff(nextGoals);
+      if (kickoffCreated) {
+        threads.value = await api.getProjectThreads(projectId.value);
+      }
+    }
+    goalsNotice.value = kickoffCreated
+      ? "Goals saved. Board kickoff thread created."
+      : "Goals saved.";
+  } catch (e) {
+    goalsNotice.value = e instanceof Error ? e.message : "Failed to save goals";
+  } finally {
+    goalsSaving.value = false;
+  }
+}
+
+async function clearGoals() {
+  goalsDraft.value = "";
+  await saveGoals();
 }
 
 async function createThread() {
@@ -70,7 +139,38 @@ onMounted(load);
     <template v-else-if="project">
       <h1>{{ project.name }}</h1>
       <p class="sub"><code>{{ project.slug }}</code></p>
-      <p v-if="project.goals" class="goals">{{ project.goals }}</p>
+
+      <section class="board-goals">
+        <h2>Board goals</h2>
+        <p class="goals-help">Set project direction and expected outcomes.</p>
+        <div class="goals-form">
+          <textarea
+            v-model="goalsDraft"
+            class="input goals-textarea"
+            placeholder="Write project goals, scope, hiring needs, and constraints..."
+            rows="5"
+          ></textarea>
+          <div class="goals-actions">
+            <button
+              type="button"
+              class="btn"
+              :disabled="goalsSaving"
+              @click="saveGoals"
+            >
+              {{ goalsSaving ? "Saving…" : "Save goals" }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="goalsSaving || !goalsDraft.trim()"
+              @click="clearGoals"
+            >
+              Clear
+            </button>
+          </div>
+          <p v-if="goalsNotice" class="goals-notice">{{ goalsNotice }}</p>
+        </div>
+      </section>
 
       <section class="create-thread">
         <h2>New thread</h2>
@@ -119,10 +219,41 @@ h1 {
   font-size: 1.5rem;
   margin: 0 0 0.25rem;
 }
-.sub, .goals {
+.sub {
   color: var(--muted);
   margin: 0 0 1rem;
   font-size: 0.9rem;
+}
+.board-goals {
+  margin-top: 1.5rem;
+}
+.board-goals h2 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+.goals-help {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.goals-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 40rem;
+}
+.goals-textarea {
+  resize: vertical;
+  min-height: 6rem;
+}
+.goals-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.goals-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 .create-thread, .threads {
   margin-top: 1.5rem;
@@ -160,6 +291,10 @@ select.input {
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.btn-secondary {
+  background: var(--surface);
+  color: var(--fg);
 }
 .thread-list {
   list-style: none;

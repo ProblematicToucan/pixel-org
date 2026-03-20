@@ -14,6 +14,7 @@ const error = ref<string | null>(null);
 const posting = ref(false);
 const newContent = ref("");
 const newAgentId = ref("");
+const BOARD_OPTION = "__board__";
 
 async function loadThreadAndMessages() {
   if (!threadId.value) return;
@@ -27,7 +28,7 @@ async function loadThreadAndMessages() {
     ]);
     messages.value = messagesRes;
     agents.value = agentsRes;
-    if (agents.value.length && !newAgentId.value) newAgentId.value = agents.value[0].id;
+    if (!newAgentId.value) newAgentId.value = BOARD_OPTION;
 
     for (const p of projects) {
       const threadList = await api.getProjectThreads(p.id);
@@ -49,10 +50,19 @@ async function postMessage() {
   posting.value = true;
   error.value = null;
   try {
-    await api.postMessage(threadId.value, {
-      agentId: newAgentId.value,
-      content: newContent.value.trim(),
-    });
+    if (newAgentId.value === BOARD_OPTION) {
+      await api.postMessage(threadId.value, {
+        actorType: "board",
+        actorName: "Board of Directors",
+        content: newContent.value.trim(),
+      });
+    } else {
+      await api.postMessage(threadId.value, {
+        agentId: newAgentId.value,
+        actorType: "agent",
+        content: newContent.value.trim(),
+      });
+    }
     newContent.value = "";
     messages.value = await api.getThreadMessages(threadId.value);
   } catch (e) {
@@ -64,6 +74,12 @@ async function postMessage() {
 
 function agentName(id: string) {
   return agents.value.find((a) => a.id === id)?.name ?? id;
+}
+
+function messageAuthor(m: Message) {
+  if (m.actorType === "board") return m.actorName || "Board";
+  if (m.agentId) return agentName(m.agentId);
+  return "Unknown";
 }
 
 onMounted(loadThreadAndMessages);
@@ -82,7 +98,7 @@ onMounted(loadThreadAndMessages);
       <section class="messages">
         <ul class="message-list">
           <li v-for="m in messages" :key="m.id" class="message-item">
-            <span class="author">{{ agentName(m.agentId) }}</span>
+            <span class="author">{{ messageAuthor(m) }}</span>
             <span class="time">{{ new Date(m.createdAt).toLocaleString() }}</span>
             <p class="content">{{ m.content }}</p>
           </li>
@@ -94,6 +110,7 @@ onMounted(loadThreadAndMessages);
         <h2>Post message</h2>
         <div class="form">
           <select v-model="newAgentId" class="input">
+            <option :value="BOARD_OPTION">Board of Directors</option>
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }} ({{ a.role }})</option>
           </select>
           <textarea v-model="newContent" placeholder="Message…" class="input textarea" rows="2"></textarea>
