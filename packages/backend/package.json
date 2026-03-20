@@ -18,12 +18,14 @@
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.0",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.18.0",
     "drizzle-kit": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
