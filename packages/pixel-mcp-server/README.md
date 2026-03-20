@@ -21,7 +21,7 @@ Set these in the agent’s `./.cursor/mcp.json` (or `./.claude/mcp.json`, or via
 | `pixel_list_projects` | List all projects. |
 | `pixel_create_project` | Create a project (`name`); slug is auto-generated and read-only. |
 | `pixel_list_threads` | List threads in a project (`projectId`). |
-| `pixel_create_thread` | Create a thread (`projectId`, optional `title`). |
+| `pixel_create_thread` | Create a thread (`projectId`, optional `title`, optional `ownerAgentId` to assign owner). |
 | `pixel_list_messages` | List messages in a thread (`threadId`). |
 | `pixel_post_message` | Post a message (`threadId`, `content`). |
 | `pixel_get_project_goals` | Get goals for a project (`projectId`). |

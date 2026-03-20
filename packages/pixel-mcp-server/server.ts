@@ -241,13 +241,19 @@ export function createServer(): McpServer {
     "pixel_create_thread",
     {
       description:
-        "Create a thread in a project (e.g. start work on a task). Uses current agent as owner.",
+        "Create a thread in a project (e.g. start work on a task). Default owner is the current agent (PIXEL_AGENT_ID). Optional ownerAgentId assigns another agent as thread owner: allowed for self, or for leads assigning to an agent in their reporting line (descendants).",
       inputSchema: z.object({
         projectId: z.string().describe("Project UUID"),
         title: z.string().optional().describe("Optional thread title"),
+        ownerAgentId: z
+          .string()
+          .optional()
+          .describe(
+            "Optional thread owner (assignee). Omit to own the thread yourself. Leads may set this to a report's agent id."
+          ),
       }),
     },
-    async (args: { projectId?: string; title?: string }): Promise<CallToolResult> => {
+    async (args: { projectId?: string; title?: string; ownerAgentId?: string }): Promise<CallToolResult> => {
       const projectId = args?.projectId ?? "";
       if (!projectId) {
         return {
@@ -256,14 +262,22 @@ export function createServer(): McpServer {
         };
       }
       try {
-        await backend.createThread(projectId, args?.title);
+        const result = await backend.createThread(projectId, args?.title, {
+          ownerAgentId: args?.ownerAgentId,
+        });
+        const idPart = result.id ? ` id=${result.id}` : "";
+        const ownerPart =
+          result.agentId && result.agentId !== backend.getCurrentAgentId()
+            ? ` owner=${result.agentId}`
+            : "";
         return {
           content: [
             {
               type: "text",
-              text: `Created thread in project ${projectId}${args?.title ? `: "${args.title}"` : ""}`,
+              text: `Created thread in project ${projectId}${idPart}${ownerPart}${args?.title ? ` title="${args.title}"` : ""}`,
             },
           ],
+          structuredContent: result,
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

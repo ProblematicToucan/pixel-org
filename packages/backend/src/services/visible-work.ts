@@ -1,8 +1,26 @@
 import fs from "fs";
+import { eq } from "drizzle-orm";
 import { agents } from "../db/schema.js";
 import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
 
 type Db = typeof import("../db/index.js").db;
+
+/**
+ * Whether requester may create a thread owned by ownerAgentId.
+ * - Always allowed if requester === owner (self).
+ * - Otherwise: only leads may assign, and owner must be in requester's org subtree (self + descendants).
+ */
+export async function canAssignThreadOwner(
+  db: Db,
+  requesterId: string,
+  ownerId: string
+): Promise<boolean> {
+  if (requesterId === ownerId) return true;
+  const [requester] = await db.select().from(agents).where(eq(agents.id, requesterId)).limit(1);
+  if (!requester?.isLead) return false;
+  const descendants = await getDescendantAgents(db, requesterId);
+  return descendants.some((d) => d.id === ownerId);
+}
 
 /** All agents that are self or descendants (reports) of the given agent. */
 export async function getDescendantAgents(

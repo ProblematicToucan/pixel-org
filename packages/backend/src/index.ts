@@ -10,7 +10,7 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages, agentRunRequests } from "./db/index.js";
-import { getVisibleWork } from "./services/visible-work.js";
+import { getVisibleWork, canAssignThreadOwner } from "./services/visible-work.js";
 import {
   enqueueKickoffLeadRun,
   enqueueThreadOwnerRunOnMessage,
@@ -410,29 +410,56 @@ app.get("/projects/:id/threads", async (req, res) => {
 app.post("/projects/:id/threads", async (req, res) => {
   try {
     const projectId = req.params.id?.trim();
-    const { agentId, title } = req.body;
+    const { agentId, title, requesterAgentId } = req.body as {
+      agentId?: string;
+      title?: string | null;
+      requesterAgentId?: string | null;
+    };
     if (!projectId || agentId == null) {
       res.status(400).json({ error: "project id and agentId required" });
       return;
+    }
+    const ownerId = String(agentId).trim();
+    const requesterRaw =
+      requesterAgentId === undefined || requesterAgentId === null ? "" : String(requesterAgentId).trim();
+    if (requesterRaw) {
+      const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
+      if (!ownerRow) {
+        res.status(400).json({ error: "agentId (thread owner) not found" });
+        return;
+      }
+      const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterRaw)).limit(1);
+      if (!requesterRow) {
+        res.status(400).json({ error: "requesterAgentId not found" });
+        return;
+      }
+      const allowed = await canAssignThreadOwner(db, requesterRaw, ownerId);
+      if (!allowed) {
+        res.status(403).json({
+          error:
+            "Not allowed to assign this owner: must be self, or (as a lead) assign to an agent in your reporting line",
+        });
+        return;
+      }
     }
     const threadId = randomUUID();
     await db.insert(threads).values({
       id: threadId,
       projectId,
-      agentId: String(agentId).trim(),
+      agentId: ownerId,
       title: title != null ? String(title).trim() : null,
     });
     await enqueueKickoffLeadRun({
       projectId,
       threadId,
       title: title != null ? String(title).trim() : null,
-      preferredAgentId: String(agentId).trim(),
+      preferredAgentId: ownerId,
     });
     res.status(201).json({
       success: true,
       id: threadId,
       projectId,
-      agentId: String(agentId).trim(),
+      agentId: ownerId,
     });
   } catch (err) {
     console.error(err);

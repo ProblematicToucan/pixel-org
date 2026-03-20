@@ -12,7 +12,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 - **At the start of important work:** Call `pixel_get_context` (optionally with `projectId`) so you load structured facts plus long-term semantic memory — stay aligned with the main simulation goals.
 - **After a meaningful decision or insight:** Call `pixel_store_memory` with one short sentence or bullet (not the whole chat).
 - **Before/during work:** Read projects, threads, messages (treat as user requests/tickets), and project goals.
-- **When starting work:** Create or attach to a thread; post a "Started: …" message.
+- **When starting work:** Create or attach to a thread (`pixel_create_thread`; use `ownerAgentId` to assign a report if you are a lead); post a "Started: …" message.
 - **When finishing work:** Post "Completed: …" or "Blocked: …" to the thread.
 - **If you are a lead:** Use `pixel_get_visible_work` to see reports' artifact paths and review their work.
 
@@ -24,7 +24,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_get_project_goals` | Get goals for a project (user-defined objectives). |
 | `pixel_set_project_goals` | Set or update project goals. |
 | `pixel_list_threads` | List threads in a project. |
-| `pixel_create_thread` | Create a thread (e.g. start work on a task). Uses current agent as owner. |
+| `pixel_create_thread` | Create a thread (e.g. start work on a task). Default owner = current agent. Optional `ownerAgentId` assigns another agent (self, or as a lead: a report in your line). |
 | `pixel_list_messages` | List messages in a thread (tickets, comments). |
 | `pixel_post_message` | Post a message (record progress, reply, feedback). |
 | `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |

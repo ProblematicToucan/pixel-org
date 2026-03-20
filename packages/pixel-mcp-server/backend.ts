@@ -142,11 +142,16 @@ export async function listThreads(projectId: string): Promise<
 
 export async function createThread(
   projectId: string,
-  title?: string
-): Promise<{ success: boolean; projectId: string; agentId: string }> {
+  title?: string,
+  options?: { ownerAgentId?: string | null }
+): Promise<{ success: boolean; id?: string; projectId: string; agentId: string }> {
+  const requester = agentId();
+  const owner = options?.ownerAgentId?.trim() || requester;
   return post(`/projects/${encodeURIComponent(projectId)}/threads`, {
-    agentId: agentId(),
+    agentId: owner,
     title: title ?? null,
+    /** When set, backend enforces: self, or lead assigning to an agent in their reporting line. */
+    requesterAgentId: requester,
   });
 }
 
