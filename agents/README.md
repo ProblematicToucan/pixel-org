@@ -33,7 +33,7 @@ agents/
 ```
 
 - **Agent directory:** `{id}-{role-slug}` (e.g. `1-CEO`, `3-engineer`).
-- **At agent level:** `.agents/mcp.json` and `.agents/skills/` – one set per agent, reused for all their projects.
+- **At agent level:** `.agents/mcp.json` and `.agents/skills/` – one set per agent, reused for all their projects. In `mcp.json`, set `PIXEL_BACKEND_URL` and `PIXEL_AGENT_ID`; optionally add **`OPENAI_API_KEY`** for Mem0 OSS memory tools (`pixel_get_context`, `pixel_store_memory`).
 - **Project directory:** only `artifacts/` – project = workspace for that agent’s outputs.
 
 Override the root with env: `AGENTS_STORAGE_PATH=/path/to/agents`.

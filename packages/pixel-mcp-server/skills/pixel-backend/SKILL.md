@@ -9,6 +9,8 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 
 ## When to use
 
+- **At the start of important work:** Call `pixel_get_context` (optionally with `projectId`) so you load structured facts plus long-term semantic memory — stay aligned with the main simulation goals.
+- **After a meaningful decision or insight:** Call `pixel_store_memory` with one short sentence or bullet (not the whole chat).
 - **Before/during work:** Read projects, threads, messages (treat as user requests/tickets), and project goals.
 - **When starting work:** Create or attach to a thread; post a "Started: …" message.
 - **When finishing work:** Post "Completed: …" or "Blocked: …" to the thread.
@@ -26,9 +28,11 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_list_messages` | List messages in a thread (tickets, comments). |
 | `pixel_post_message` | Post a message (record progress, reply, feedback). |
 | `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |
+| `pixel_get_context` | **Start of task:** one block with agent info, optional project goals, optional visible-work paths, and **Mem0 OSS** semantic memory (if `OPENAI_API_KEY` is set). Keeps long-term goals and facts. |
+| `pixel_store_memory` | Store a **concise** long-term memory in Mem0 (decision, insight, preference, fact). Scoped by agent and optional `projectId`. Do not paste full transcripts. |
 | `pixel_show_context` | Open Pixel Context UI: projects, threads, messages (and goals) in one view. |
 
-Identity (who you are) and backend URL are set via env (`PIXEL_AGENT_ID`, `PIXEL_BACKEND_URL`); you do not pass them in tool calls.
+Identity (who you are) and backend URL are set via env (`PIXEL_AGENT_ID`, `PIXEL_BACKEND_URL`); you do not pass them in tool calls. Optional **`OPENAI_API_KEY`** on the MCP server enables Mem0 open-source semantic memory (`pixel_get_context`, `pixel_store_memory`). See [Mem0 Node quickstart](https://docs.mem0.ai/open-source/node-quickstart).
 
 ## Record and audit (minimum)
 

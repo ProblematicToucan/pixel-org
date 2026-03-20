@@ -12,6 +12,11 @@ function agentId(): string {
   return AGENT_ID;
 }
 
+/** Current agent UUID from env (same as used for backend calls). */
+export function getCurrentAgentId(): string {
+  return agentId();
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`);
   if (!res.ok) {
@@ -72,6 +77,22 @@ export type VisibleAgentWork = {
 
 export async function getVisibleWork(): Promise<VisibleAgentWork[]> {
   return get<VisibleAgentWork[]>(`/agents/${encodeURIComponent(agentId())}/visible-work`);
+}
+
+export type AgentRow = {
+  id: string;
+  name: string;
+  type: string;
+  role: string;
+  isLead: boolean | number;
+  parentId: string | null;
+  config: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getAgent(id: string): Promise<AgentRow> {
+  return get<AgentRow>(`/agents/${encodeURIComponent(id)}`);
 }
 
 export type Project = { id: string; name: string; slug: string; goals?: string | null };

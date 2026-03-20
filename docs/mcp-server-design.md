@@ -122,6 +122,17 @@ Optional (later):
 
 - **Resources** (read-only): e.g. `pixel://agent/visible-work` so the agent can pull visible work as a resource instead of/in addition to a tool.
 
+### Semantic memory (Mem0 open-source)
+
+Threads and messages remain the **audit trail**; [Mem0 OSS](https://docs.mem0.ai/open-source/node-quickstart) (`mem0ai/oss`) holds **compressed long-term recall** (decisions, preferences, main ideas) in-process (in-memory vector store + optional SQLite history).
+
+| MCP tool | Behavior |
+|----------|----------|
+| `pixel_get_context` | Merges structured data from the backend (current agent row, optional project goals, optional visible-work JSON) with OSS `Memory.search` for the scoped `userId`. If **`OPENAI_API_KEY`** is missing, structured sections still work; Mem0 is skipped with a short notice. |
+| `pixel_store_memory` | Adds a concise memory via OSS `Memory.add` with `infer: false`, scoped by **`pixel:{agentId}:global`** or **`pixel:{agentId}:p:{projectId}`**. |
+
+Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL_MEM0_HISTORY_DB`** for SQLite history path; **`MEM0_EMBED_MODEL`**, **`MEM0_LLM_MODEL`**, **`MEM0_VECTOR_COLLECTION`** overrides.
+
 ---
 
 ## 6. How the agent uses it (no “call API” skill)

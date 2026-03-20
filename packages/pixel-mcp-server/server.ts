@@ -9,7 +9,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { buildAgentContextBlock } from "./agent-context.js";
 import * as backend from "./backend.js";
+import { addMemory, isMemoryConfigured, mem0UserId, type StoreMemoryCategory } from "./memory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -260,6 +262,109 @@ export function createServer(): McpServer {
       try {
         await backend.postMessage(threadId, String(content));
         return { content: [{ type: "text", text: "Message posted." }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_get_context",
+    {
+      description:
+        "Build a single context block for this run: agent info from the backend, optional project goals, optional visible-work paths, and Mem0 OSS semantic memory (if OPENAI_API_KEY is set). Call at the start of a task so you keep the main goals and long-term facts.",
+      inputSchema: z.object({
+        projectId: z
+          .string()
+          .optional()
+          .describe("Optional project UUID — scopes Mem0 memory and loads that project's goals"),
+        query: z
+          .string()
+          .optional()
+          .describe("Optional natural-language query for semantic memory search (Mem0)"),
+        includeVisibleWork: z
+          .boolean()
+          .optional()
+          .describe("If true, include JSON of visible artifact paths (can be large; for leads)"),
+      }),
+    },
+    async (args: {
+      projectId?: string;
+      query?: string;
+      includeVisibleWork?: boolean;
+    }): Promise<CallToolResult> => {
+      try {
+        const text = await buildAgentContextBlock({
+          projectId: args?.projectId,
+          query: args?.query,
+          includeVisibleWork: args?.includeVisibleWork === true,
+        });
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  const storeCategorySchema = z.enum(["decision", "insight", "preference", "fact", "other"]);
+
+  server.registerTool(
+    "pixel_store_memory",
+    {
+      description:
+        "Store a distilled long-term memory in Mem0 OSS (decisions, insights, preferences, important facts). Do not dump full chats — one concise fact per call. Requires OPENAI_API_KEY. Scoped by agent and optional projectId.",
+      inputSchema: z.object({
+        content: z.string().describe("Concise memory to retain (one idea per call)"),
+        projectId: z
+          .string()
+          .optional()
+          .describe("Optional project UUID — memory is scoped to this project"),
+        category: storeCategorySchema
+          .optional()
+          .describe("Type of memory (default: other)"),
+      }),
+    },
+    async (args: {
+      content?: string;
+      projectId?: string;
+      category?: StoreMemoryCategory;
+    }): Promise<CallToolResult> => {
+      if (!isMemoryConfigured()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: OPENAI_API_KEY is not set on the MCP server. Mem0 OSS needs it for embedder and LLM; semantic memory storage is disabled.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const content = args?.content ?? "";
+      if (!content.trim()) {
+        return {
+          content: [{ type: "text", text: "Error: content is required" }],
+          isError: true,
+        };
+      }
+      try {
+        const agentId = backend.getCurrentAgentId();
+        const userId = mem0UserId(agentId, args?.projectId?.trim());
+        await addMemory({
+          userId,
+          content: content.trim(),
+          category: args?.category,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Stored memory for user_id=${userId}${args?.category ? ` (${args.category})` : ""}.`,
+            },
+          ],
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };

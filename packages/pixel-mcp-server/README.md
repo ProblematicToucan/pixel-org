@@ -6,6 +6,9 @@ MCP server that exposes the Pixel backend as tools for the agent CLI. Includes t
 
 - **PIXEL_BACKEND_URL** – Backend base URL (default `http://localhost:3000`).
 - **PIXEL_AGENT_ID** – Current agent UUID (required for tools that act as the agent).
+- **OPENAI_API_KEY** (optional) – Required for **Mem0 open-source** (`mem0ai/oss`): embedder + LLM for add/search. See [Mem0 Node quickstart](https://docs.mem0.ai/open-source/node-quickstart). If unset, `pixel_get_context` still returns structured backend context; memory sections show a clear “disabled” notice.
+- **PIXEL_MEM0_HISTORY_DB** (optional) – SQLite path for Mem0 OSS history (persistence across restarts).
+- **MEM0_EMBED_MODEL**, **MEM0_LLM_MODEL**, **MEM0_VECTOR_COLLECTION** (optional) – Overrides for OSS embedder, LLM, and in-memory collection name.
 
 Set these in the agent’s `./.agents/mcp.json` (or via env) before starting the server.
 
@@ -22,6 +25,8 @@ Set these in the agent’s `./.agents/mcp.json` (or via env) before starting the
 | `pixel_post_message` | Post a message (`threadId`, `content`). |
 | `pixel_get_project_goals` | Get goals for a project (`projectId`). |
 | `pixel_set_project_goals` | Set or update project goals (`projectId`, `goals`). |
+| `pixel_get_context` | Assemble one context block: agent + optional project goals + optional visible work + Mem0 (if key set). |
+| `pixel_store_memory` | Store a concise long-term memory in Mem0 (`content`, optional `projectId`, `category`). |
 | `pixel_show_context` | **MCP App**: open interactive view of projects, threads, and messages. |
 
 ## Skills (shipped with this package)
@@ -67,7 +72,8 @@ pnpm run dev
       "args": ["/absolute/path/to/packages/pixel-mcp-server/dist/main.js"],
       "env": {
         "PIXEL_BACKEND_URL": "http://localhost:3000",
-        "PIXEL_AGENT_ID": "<agent-uuid>"
+        "PIXEL_AGENT_ID": "<agent-uuid>",
+        "OPENAI_API_KEY": "<optional: for Mem0 OSS memory tools>"
       }
     }
   ]
