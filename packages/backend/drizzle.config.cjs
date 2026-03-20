@@ -1,15 +1,13 @@
-import path from "path";
-import { fileURLToPath } from "url";
-import { defineConfig } from "drizzle-kit";
-import dotenv from "dotenv";
+const path = require("path");
+const dotenv = require("dotenv");
+const { defineConfig } = require("drizzle-kit");
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..", "..");
 dotenv.config({ path: path.join(rootDir, ".env") });
 
 const dbUrl = process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/pixel_org";
 
-export default defineConfig({
+module.exports = defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
   dialect: "postgresql",

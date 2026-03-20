@@ -22,9 +22,9 @@ importers:
 
   packages/backend:
     dependencies:
-      better-sqlite3:
-        specifier: ^11.6.0
-        version: 11.10.0
+      '@electric-sql/pglite':
+        specifier: ^0.4.1
+        version: 0.4.1
       cors:
         specifier: ^2.8.6
         version: 2.8.6
@@ -33,14 +33,11 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.36.0
-        version: 0.36.4(@cloudflare/workers-types@4.20260317.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@11.10.0)(pg@8.20.0)
+        version: 0.36.4(@cloudflare/workers-types@4.20260317.1)(@electric-sql/pglite@0.4.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@11.10.0)(pg@8.20.0)
       express:
         specifier: ^4.21.0
         version: 4.22.1
     devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.11
-        version: 7.6.13
       '@types/cors':
         specifier: ^2.8.19
         version: 2.8.19
@@ -228,6 +225,9 @@ packages:
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
+
+  '@electric-sql/pglite@0.4.1':
+    resolution: {integrity: sha512-mZ9NzzUSYPOCnxHH1oAHPRzoMFJHY472raDKwXl/+6oPbpdJ7g8LsCN4FSaIIfkiCKHhb3iF/Zqo3NYxaIhU7Q==}
 
   '@emnapi/core@1.9.0':
     resolution: {integrity: sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w==}
@@ -2935,6 +2935,8 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
+  '@electric-sql/pglite@0.4.1': {}
+
   '@emnapi/core@1.9.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.0
@@ -3399,6 +3401,7 @@ snapshots:
   '@types/better-sqlite3@7.6.13':
     dependencies:
       '@types/node': 22.19.15
+    optional: true
 
   '@types/body-parser@1.19.6':
     dependencies:
@@ -3922,9 +3925,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.36.4(@cloudflare/workers-types@4.20260317.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@11.10.0)(pg@8.20.0):
+  drizzle-orm@0.36.4(@cloudflare/workers-types@4.20260317.1)(@electric-sql/pglite@0.4.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@11.10.0)(pg@8.20.0):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260317.1
+      '@electric-sql/pglite': 0.4.1
       '@types/better-sqlite3': 7.6.13
       '@types/pg': 8.18.0
       better-sqlite3: 11.10.0

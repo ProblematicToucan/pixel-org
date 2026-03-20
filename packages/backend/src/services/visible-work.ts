@@ -1,9 +1,8 @@
 import fs from "fs";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { agents } from "../db/schema.js";
 import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
 
-type Db = BetterSQLite3Database<{ agents: typeof agents }>;
+type Db = typeof import("../db/index.js").db;
 
 /** All agents that are self or descendants (reports) of the given agent. */
 export async function getDescendantAgents(

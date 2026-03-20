@@ -1,66 +1,66 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text, boolean, timestamp } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
 /** UUID primary key for SQLite (no native UUID; store as text, generate in app). */
-const uuid = () => text("id", { length: 36 }).primaryKey().$default(() => randomUUID());
+const uuid = () => text("id").primaryKey().$defaultFn(() => randomUUID());
 
 /**
  * Agents = participants (like users). Can be recruited, registered, and interact in projects/threads.
  */
-export const agents = sqliteTable("agents", {
+export const agents = pgTable("agents", {
   id: uuid(),
   name: text("name").notNull(),
   type: text("type").notNull(),
   role: text("role").notNull(),
-  isLead: integer("is_lead", { mode: "boolean" }).default(false),
-  parentId: text("parent_id", { length: 36 }).references((): any => agents.id),
+  isLead: boolean("is_lead").default(false),
+  parentId: text("parent_id").references((): any => agents.id),
   config: text("config"),
-  createdAt: text("created_at").default("CURRENT_TIMESTAMP").notNull(),
-  updatedAt: text("updated_at").default("CURRENT_TIMESTAMP").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 
 /** Project (like Slack channel / repo). Has many threads. Goals = user-defined objectives (Option B). */
-export const projects = sqliteTable("projects", {
+export const projects = pgTable("projects", {
   id: uuid(),
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   goals: text("goals"),
-  createdAt: text("created_at").default("CURRENT_TIMESTAMP").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 
 /** Thread = one piece of work in a project. One agent owns; any agent can discuss. */
-export const threads = sqliteTable("threads", {
+export const threads = pgTable("threads", {
   id: uuid(),
-  projectId: text("project_id", { length: 36 })
+  projectId: text("project_id")
     .notNull()
     .references(() => projects.id),
-  agentId: text("agent_id", { length: 36 })
+  agentId: text("agent_id")
     .notNull()
     .references(() => agents.id),
   title: text("title"),
-  createdAt: text("created_at").default("CURRENT_TIMESTAMP").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Thread = typeof threads.$inferSelect;
 export type NewThread = typeof threads.$inferInsert;
 
 /** Message = one reply in a thread. Any agent can post. */
-export const messages = sqliteTable("messages", {
+export const messages = pgTable("messages", {
   id: uuid(),
-  threadId: text("thread_id", { length: 36 })
+  threadId: text("thread_id")
     .notNull()
     .references(() => threads.id),
-  agentId: text("agent_id", { length: 36 })
+  agentId: text("agent_id")
     .notNull()
     .references(() => agents.id),
   content: text("content").notNull(),
-  createdAt: text("created_at").default("CURRENT_TIMESTAMP").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Message = typeof messages.$inferSelect;

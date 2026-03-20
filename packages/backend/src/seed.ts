@@ -11,7 +11,7 @@ const rootDir = path.resolve(__dirname, "..", "..", "..");
 dotenv.config({ path: path.join(rootDir, ".env") });
 
 import { eq } from "drizzle-orm";
-import { db } from "./db/index.js";
+import { closeDb, db } from "./db/index.js";
 import { agents } from "./db/schema.js";
 import { getAgentsMdConfigPointer, provisionAgentWorkspace } from "./storage/index.js";
 
@@ -68,7 +68,11 @@ async function seed() {
   }
 }
 
-seed().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+seed()
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await closeDb();
+  });

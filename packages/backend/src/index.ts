@@ -47,7 +47,7 @@ async function syncAgentConfigPointers(): Promise<void> {
     if (row.config !== pointer) {
       await db
         .update(agents)
-        .set({ config: pointer, updatedAt: new Date().toISOString() })
+        .set({ config: pointer, updatedAt: new Date() })
         .where(eq(agents.id, row.id));
     }
   }
@@ -94,11 +94,11 @@ app.patch("/agents/:id", async (req, res) => {
       res.status(400).json({ error: "Invalid agent id" });
       return;
     }
-    const updates: { name?: string; role?: string; config?: string | null; updatedAt?: string } = {};
+    const updates: { name?: string; role?: string; config?: string | null; updatedAt?: Date } = {};
     if (typeof name === "string") updates.name = name.trim();
     if (typeof role === "string") updates.role = role.trim();
     if (config !== undefined) updates.config = config === null || config === "" ? null : String(config).trim();
-    updates.updatedAt = new Date().toISOString();
+    updates.updatedAt = new Date();
     if (Object.keys(updates).filter((k) => k !== "updatedAt").length === 0) {
       res.status(400).json({ error: "No valid fields to update" });
       return;
@@ -119,7 +119,7 @@ app.patch("/agents/:id", async (req, res) => {
       if (updated.config !== configPointer) {
         await db
           .update(agents)
-          .set({ config: configPointer, updatedAt: new Date().toISOString() })
+          .set({ config: configPointer, updatedAt: new Date() })
           .where(eq(agents.id, id));
       }
     }
