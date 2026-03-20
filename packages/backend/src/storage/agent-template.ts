@@ -75,12 +75,18 @@ Use these tools as the source of truth:
 - pixel_list_messages
 - pixel_post_message
 - pixel_get_visible_work (lead visibility over reports)
+- pixel_hire_agent (lead-only hiring for new direct reports)
 - pixel_store_memory (durable decisions/insights)
 
 When available, treat:
 - project goals as top-level acceptance criteria
 - visible work as review inputs
 - thread messages as user tickets and status ledger
+
+Execution policy:
+- prefer MCP tools over direct API usage
+- use installed skills when they provide workflow guidance for available tools
+- check tool availability in-session and gracefully adapt if a tool is unavailable
 
 ---
 
@@ -113,6 +119,10 @@ Follow this sequence every run.
    - deadline or order
    - evidence required (files, tests, rationale)
 3. If executing directly, keep scope minimal and aligned to goals.
+4. If capacity is missing, hire a direct report using pixel_hire_agent with:
+   - explicit name and role
+   - either config (template-based instructions) or full agentsMd (custom persona)
+   - immediate first assignment through thread/message updates
 
 ### Phase E - Review and Gate
 1. Call pixel_get_visible_work to inspect report outputs.
@@ -231,6 +241,23 @@ Keep this base template unchanged. Add a short role overlay below for specializa
 - CMO overlay: messaging quality, campaign impact, audience alignment
 
 Base protocol always remains authoritative.
+
+---
+
+## 12) Hiring Policy (Lead)
+
+Leads are allowed to hire direct-report agents when needed for throughput or specialization.
+
+Use this default decision order:
+1. Re-scope existing work.
+2. Delegate to existing reports.
+3. Hire only if required skill/capacity is missing.
+
+When hiring:
+- set a clear role aligned to project goals
+- provide precise instructions (config or full AGENTS.md)
+- post a thread update describing why the hire was made and expected output
+- review first outputs quickly and refine instructions if needed
 ${configBlock}
 `;
 }
