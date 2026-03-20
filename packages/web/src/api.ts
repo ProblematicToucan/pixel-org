@@ -182,4 +182,9 @@ export const api = {
       "/threads/" + encodeURIComponent(threadId) + "/messages",
       { method: "POST", body: JSON.stringify(body) }
     ),
+  postBoardMessage: (threadId: string, body: { content: string }) =>
+    fetchApi<{ success: boolean; threadId: string; actorType: "board"; agentId: null }>(
+      "/threads/" + encodeURIComponent(threadId) + "/messages/board",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
 };

@@ -36,9 +36,7 @@ async function maybeCreateBoardKickoff(goals: string) {
     title: "Board kickoff",
   });
 
-  await api.postMessage(created.id, {
-    actorType: "board",
-    actorName: "Board of Directors",
+  await api.postBoardMessage(created.id, {
     content: `Project goals:\n\n${goals}`,
   });
 

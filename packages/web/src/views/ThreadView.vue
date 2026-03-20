@@ -13,8 +13,6 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const posting = ref(false);
 const newContent = ref("");
-const newAgentId = ref("");
-const BOARD_OPTION = "__board__";
 let fallbackPollTimer: number | null = null;
 let stream: EventSource | null = null;
 const selectedRunEventIds = ref<Record<string, string>>({});
@@ -52,7 +50,6 @@ async function loadThreadAndMessages(options?: { background?: boolean }) {
     ]);
     messages.value = messagesRes;
     agents.value = agentsRes;
-    if (!newAgentId.value) newAgentId.value = BOARD_OPTION;
 
     for (const p of projects) {
       const threadList = await api.getProjectThreads(p.id);
@@ -72,23 +69,13 @@ async function loadThreadAndMessages(options?: { background?: boolean }) {
 }
 
 async function postMessage() {
-  if (!threadId.value || !newAgentId.value || !newContent.value.trim()) return;
+  if (!threadId.value || !newContent.value.trim()) return;
   posting.value = true;
   error.value = null;
   try {
-    if (newAgentId.value === BOARD_OPTION) {
-      await api.postMessage(threadId.value, {
-        actorType: "board",
-        actorName: "Board of Directors",
-        content: newContent.value.trim(),
-      });
-    } else {
-      await api.postMessage(threadId.value, {
-        agentId: newAgentId.value,
-        actorType: "agent",
-        content: newContent.value.trim(),
-      });
-    }
+    await api.postBoardMessage(threadId.value, {
+      content: newContent.value.trim(),
+    });
     newContent.value = "";
     messages.value = await api.getThreadMessages(threadId.value);
   } catch (e) {
@@ -406,11 +393,8 @@ onUnmounted(() => {
 
       <section class="post-form">
         <h2>Post message</h2>
+        <p class="meta">Posts are authored as Board of Directors for auditability.</p>
         <div class="form">
-          <select v-model="newAgentId" class="input">
-            <option :value="BOARD_OPTION">Board of Directors</option>
-            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }} ({{ a.role }})</option>
-          </select>
           <textarea v-model="newContent" placeholder="Message…" class="input textarea" rows="2"></textarea>
           <button type="button" class="btn" :disabled="posting || !newContent.trim()" @click="postMessage">
             {{ posting ? "Posting…" : "Post" }}

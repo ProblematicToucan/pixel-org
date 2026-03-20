@@ -645,6 +645,63 @@ app.post("/threads/:id/messages", async (req, res) => {
   }
 });
 
+// --- User messages (strict Board-of-Directors identity for auditability) ---
+app.post("/threads/:id/messages/board", async (req, res) => {
+  try {
+    const threadId = req.params.id?.trim();
+    const { content, agentId, actorType, actorName } = req.body ?? {};
+    if (!threadId || content == null) {
+      res.status(400).json({ error: "thread id and content required" });
+      return;
+    }
+    // Reject any caller-supplied identity fields to prevent role spoofing.
+    if (agentId != null || actorType != null || actorName != null) {
+      res.status(400).json({
+        error: "Identity fields are not allowed. Board identity is assigned by server.",
+      });
+      return;
+    }
+    const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
+    if (!thread) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
+    const messageId = randomUUID();
+    const createdAt = new Date();
+    const inserted = {
+      id: messageId,
+      threadId,
+      agentId: null,
+      actorType: "board" as const,
+      actorName: "Board of Directors",
+      content: String(content).trim(),
+      createdAt,
+    };
+    await db.insert(messages).values(inserted);
+    void enqueueThreadOwnerRunOnMessage({
+      threadId,
+      messageId,
+      actorType: "board",
+      actorAgentId: null,
+    }).catch((err) => {
+      console.error("Failed to enqueue thread-message owner run:", err);
+    });
+    emitThreadMessage(threadId, {
+      ...inserted,
+      createdAt: createdAt.toISOString(),
+    });
+    res.status(201).json({
+      success: true,
+      threadId,
+      actorType: "board",
+      agentId: null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to post board message" });
+  }
+});
+
 syncAgentConfigPointers()
   .then(() => {
     const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
