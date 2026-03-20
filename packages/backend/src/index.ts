@@ -218,6 +218,7 @@ app.patch("/agents/:id", async (req, res) => {
       config?: string | null;
       awakeEnabled?: boolean;
       awakeIntervalMinutes?: number;
+      nextAwakeAt?: Date | null;
       updatedAt?: Date;
     } = {};
     if (typeof name === "string") updates.name = name.trim();
@@ -231,6 +232,25 @@ app.patch("/agents/:id", async (req, res) => {
         return;
       }
       updates.awakeIntervalMinutes = Math.floor(parsed);
+    }
+    // Keep scheduler state aligned with config changes so UI and runtime behavior match immediately.
+    const targetAwakeEnabled = updates.awakeEnabled ?? null;
+    const targetAwakeInterval = updates.awakeIntervalMinutes ?? null;
+    if (targetAwakeEnabled === false) {
+      updates.nextAwakeAt = null;
+    } else if (targetAwakeEnabled === true || targetAwakeInterval !== null) {
+      const [existingAgent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+      if (!existingAgent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const effectiveEnabled = targetAwakeEnabled ?? existingAgent.awakeEnabled;
+      const effectiveInterval = targetAwakeInterval ?? existingAgent.awakeIntervalMinutes;
+      if (effectiveEnabled) {
+        updates.nextAwakeAt = new Date(Date.now() + Math.max(3, effectiveInterval) * 60_000);
+      } else {
+        updates.nextAwakeAt = null;
+      }
     }
     updates.updatedAt = new Date();
     if (Object.keys(updates).filter((k) => k !== "updatedAt").length === 0) {
