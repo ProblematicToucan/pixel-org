@@ -24,7 +24,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { asc, eq, or } from "drizzle-orm";
+import { asc, desc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
 
 const app = express();
@@ -92,7 +92,10 @@ app.get("/health", (_req, res) => {
 
 app.get("/agents", async (_req, res) => {
   try {
-    const rows = await db.select().from(agents);
+    const rows = await db
+      .select()
+      .from(agents)
+      .orderBy(desc(agents.isLead), asc(agents.name));
     res.json(rows.map(enrichAgentForResponse));
   } catch (err) {
     console.error(err);
