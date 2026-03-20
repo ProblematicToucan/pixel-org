@@ -112,6 +112,17 @@ async function runQueuedRequest(requestId: string): Promise<void> {
         PIXEL_RUN_REASON: request.reason,
         PIXEL_MODEL: request.model,
       },
+      onSpawn: ({ pid, command, args }) => {
+        void db
+          .update(agentRunRequests)
+          .set({
+            pid: pid ?? null,
+            command: command ?? null,
+            args: args ? JSON.stringify(args) : null,
+            updatedAt: new Date(),
+          })
+          .where(eq(agentRunRequests.id, request.id));
+      },
     });
 
     await db
@@ -318,6 +329,64 @@ function isTerminalStatus(content: string): boolean {
   return normalized.startsWith("status: completed") || normalized.startsWith("status: blocked");
 }
 
+async function hasTerminalAgentMessageSinceStart(request: typeof agentRunRequests.$inferSelect): Promise<boolean> {
+  if (!request.startedAt) return false;
+  const threadMessages = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+  return threadMessages.some((m) => {
+    if (m.actorType !== "agent" || m.agentId !== request.agentId) return false;
+    if (new Date(m.createdAt).getTime() < new Date(request.startedAt as Date).getTime()) return false;
+    return isTerminalStatus(m.content);
+  });
+}
+
+export async function reconcileActiveRuns(now = new Date()): Promise<{ reconciledDone: number; reconciledFailed: number }> {
+  const active = await db
+    .select()
+    .from(agentRunRequests)
+    .where(or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running")));
+  let reconciledDone = 0;
+  let reconciledFailed = 0;
+
+  for (const request of active) {
+    // queued rows are left untouched; they can legitimately wait behind current work.
+    if (request.status !== "running") continue;
+
+    if (await hasTerminalAgentMessageSinceStart(request)) {
+      await db
+        .update(agentRunRequests)
+        .set({
+          status: "done",
+          error: null,
+          finishedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(agentRunRequests.id, request.id));
+      reconciledDone += 1;
+      continue;
+    }
+
+    if (request.startedAt) {
+      const startedAtMs = new Date(request.startedAt).getTime();
+      const staleAfterMs = 22 * 60 * 1000; // runtime timeout (20m) + grace window (2m)
+      if (now.getTime() - startedAtMs > staleAfterMs) {
+        await db
+          .update(agentRunRequests)
+          .set({
+            status: "failed",
+            timedOut: true,
+            error: request.error || "Run reconciled as stale: exceeded timeout without process completion signal",
+            finishedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(agentRunRequests.id, request.id));
+        reconciledFailed += 1;
+      }
+    }
+  }
+
+  return { reconciledDone, reconciledFailed };
+}
+
 async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
   const [activeForAgent] = await db
     .select()
@@ -367,6 +436,7 @@ async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
 }
 
 export async function runAwakeCycle(now = new Date()): Promise<{ dueAgents: number; enqueuedRuns: number }> {
+  await reconcileActiveRuns(now);
   const dueAgents = await db
     .select()
     .from(agents)

@@ -13,7 +13,18 @@ const BACKEND_URL_ENV_KEY = "PIXEL_BACKEND_URL";
  * If agentId/backendUrl are provided, the Pixel MCP server (in .cursor/.claude mcp.json) can use them to talk to the backend.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
-  const { provider, role, task, cwd = process.cwd(), timeoutMs, visibleWork, agentId, backendUrl, env = {} } = options;
+  const {
+    provider,
+    role,
+    task,
+    cwd = process.cwd(),
+    timeoutMs,
+    visibleWork,
+    agentId,
+    backendUrl,
+    env = {},
+    onSpawn,
+  } = options;
 
   const baseEnv: Record<string, string> = {
     ...process.env,
@@ -39,6 +50,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
       env: baseEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    onSpawn?.({ pid: proc.pid, command, args });
 
     let stdout = "";
     let stderr = "";

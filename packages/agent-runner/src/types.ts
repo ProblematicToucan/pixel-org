@@ -32,6 +32,8 @@ export interface RunAgentOptions {
   backendUrl?: string;
   /** Extra env vars (e.g. PIXEL_AGENT_ROLE is set from role) */
   env?: Record<string, string>;
+  /** Optional callback fired immediately after child process spawn. */
+  onSpawn?: (meta: { pid?: number; command: string; args: string[] }) => void;
 }
 
 export interface RunAgentResult {
