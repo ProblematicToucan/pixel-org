@@ -50,6 +50,65 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "pixel_hire_agent",
+    {
+      description:
+        "Lead-only: hire a new child agent under the current lead agent (current PIXEL_AGENT_ID).",
+      inputSchema: z.object({
+        name: z.string().describe("New agent display name"),
+        role: z.string().describe("New agent role (e.g. Engineer, Researcher)"),
+        type: z.string().optional().describe("Agent type/provider label (default: cursor)"),
+        isLead: z.boolean().optional().describe("Whether the hired agent is also a lead (default: false)"),
+        config: z.string().nullable().optional().describe("Optional instruction/config text for AGENTS.md"),
+        agentsMd: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Optional full AGENTS.md content. If provided, replaces the default generated template."),
+      }),
+    },
+    async (args: {
+      name?: string;
+      role?: string;
+      type?: string;
+      isLead?: boolean;
+      config?: string | null;
+      agentsMd?: string | null;
+    }): Promise<CallToolResult> => {
+      const name = args?.name ?? "";
+      const role = args?.role ?? "";
+      if (!name.trim() || !role.trim()) {
+        return {
+          content: [{ type: "text", text: "Error: name and role are required" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await backend.hireAgent({
+          name: name.trim(),
+          role: role.trim(),
+          type: args?.type?.trim() || "cursor",
+          isLead: args?.isLead === true,
+          config: args?.config ?? null,
+          agentsMd: args?.agentsMd ?? null,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Hired agent "${result.agent.name}" (${result.agent.role}) with id ${result.agent.id}.`,
+            },
+          ],
+          structuredContent: result,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
     "pixel_list_projects",
     {
       description: "List all projects (channels).",

@@ -95,6 +95,25 @@ export async function getAgent(id: string): Promise<AgentRow> {
   return get<AgentRow>(`/agents/${encodeURIComponent(id)}`);
 }
 
+export async function hireAgent(input: {
+  name: string;
+  role: string;
+  type?: string;
+  isLead?: boolean;
+  config?: string | null;
+  agentsMd?: string | null;
+}): Promise<{ success: boolean; hiredBy: string; agent: AgentRow & { configDisplay?: string | null } }> {
+  return post("/agents/hire", {
+    requesterAgentId: agentId(),
+    name: input.name,
+    role: input.role,
+    type: input.type ?? "cursor",
+    isLead: input.isLead === true,
+    config: input.config ?? null,
+    agentsMd: input.agentsMd ?? null,
+  });
+}
+
 export type Project = { id: string; name: string; slug: string; goals?: string | null };
 
 export async function listProjects(): Promise<Project[]> {

@@ -14,9 +14,11 @@ import { getVisibleWork } from "./services/visible-work.js";
 import {
   provisionAgentWorkspace,
   getAgentsMdConfigPointer,
+  getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
 import { eq } from "drizzle-orm";
+import fs from "node:fs";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -95,6 +97,109 @@ app.get("/agents/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch agent" });
+  }
+});
+
+/**
+ * Lead-only hiring endpoint.
+ * Creates a new child agent where parentId = requester (lead) unless overridden.
+ */
+app.post("/agents/hire", async (req, res) => {
+  try {
+    const { requesterAgentId, name, role, type, isLead, config, parentId, agentsMd } = req.body as {
+      requesterAgentId?: string;
+      name?: string;
+      role?: string;
+      type?: string;
+      isLead?: boolean;
+      config?: string | null;
+      parentId?: string | null;
+      agentsMd?: string | null;
+    };
+
+    const requesterId = String(requesterAgentId ?? "").trim();
+    if (!requesterId) {
+      res.status(400).json({ error: "requesterAgentId is required" });
+      return;
+    }
+
+    const [requester] = await db.select().from(agents).where(eq(agents.id, requesterId)).limit(1);
+    if (!requester) {
+      res.status(404).json({ error: "Requester agent not found" });
+      return;
+    }
+    if (!requester.isLead) {
+      res.status(403).json({ error: "Only lead agents can hire new agents" });
+      return;
+    }
+
+    const cleanName = String(name ?? "").trim();
+    const cleanRole = String(role ?? "").trim();
+    if (!cleanName || !cleanRole) {
+      res.status(400).json({ error: "name and role are required" });
+      return;
+    }
+
+    const cleanType = String(type ?? "cursor").trim() || "cursor";
+    const cleanConfig =
+      config === undefined || config === null || String(config).trim() === ""
+        ? null
+        : String(config).trim();
+    const hireAsLead = isLead === true;
+    const normalizedParentId =
+      parentId === undefined || parentId === null || String(parentId).trim() === ""
+        ? requester.id
+        : String(parentId).trim();
+
+    if (normalizedParentId !== requester.id) {
+      res.status(403).json({ error: "Leads can only hire direct reports under themselves" });
+      return;
+    }
+
+    const newAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: newAgentId,
+      name: cleanName,
+      type: cleanType,
+      role: cleanRole,
+      isLead: hireAsLead,
+      parentId: normalizedParentId,
+      config: cleanConfig,
+    });
+
+    const [created] = await db.select().from(agents).where(eq(agents.id, newAgentId)).limit(1);
+    if (!created) {
+      res.status(500).json({ error: "Failed to load created agent" });
+      return;
+    }
+
+    provisionAgentWorkspace({
+      id: created.id,
+      name: created.name,
+      role: created.role,
+      config: created.config,
+    });
+    const customAgentsMd = typeof agentsMd === "string" ? agentsMd.trim() : "";
+    if (customAgentsMd) {
+      fs.writeFileSync(getAgentsMdPath({ id: created.id, role: created.role }), customAgentsMd, "utf-8");
+    }
+    const configPointer = getAgentsMdConfigPointer({ id: created.id, role: created.role });
+    if (created.config !== configPointer) {
+      await db
+        .update(agents)
+        .set({ config: configPointer, updatedAt: new Date() })
+        .where(eq(agents.id, created.id));
+    }
+
+    const [finalCreated] = await db.select().from(agents).where(eq(agents.id, newAgentId)).limit(1);
+    res.status(201).json({
+      success: true,
+      hiredBy: requester.id,
+      agent: finalCreated ? enrichAgentForResponse(finalCreated) : enrichAgentForResponse(created),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to hire agent" });
   }
 });
 

@@ -28,6 +28,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_list_messages` | List messages in a thread (tickets, comments). |
 | `pixel_post_message` | Post a message (record progress, reply, feedback). |
 | `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |
+| `pixel_hire_agent` | (Leads) Hire/create a new child agent under yourself (`name`, `role`, optional `config`, optional full `agentsMd`). |
 | `pixel_get_context` | **Start of task:** one block with agent info, optional project goals, optional visible-work paths, and **Mem0 OSS** semantic memory (if `OPENAI_API_KEY` is set). Keeps long-term goals and facts. |
 | `pixel_store_memory` | Store a **concise** long-term memory in Mem0 (decision, insight, preference, fact). Scoped by agent and optional `projectId`. Do not paste full transcripts. |
 | `pixel_show_context` | Open Pixel Context UI: projects, threads, messages (and goals) in one view. |
@@ -59,3 +60,10 @@ When run autonomously (e.g. scheduled):
 3. Create a thread or use an existing one; post "Started: …", do the work, then post "Completed: …" or "Blocked: …".
 
 Same tools; no direct API calls. Everything stays recorded and auditable.
+
+## Lead hiring policy
+
+- If you are a lead and need more execution capacity, use `pixel_hire_agent` directly.
+- Hiring should happen through lead agents, not by asking the user to manually create agents.
+- If you need custom persona instructions, pass `agentsMd` to write the hired agent's full `AGENTS.md`.
+- After hiring, delegate via threads/messages and review outputs with `pixel_get_visible_work`.
