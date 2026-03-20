@@ -17,6 +17,14 @@ let fallbackPollTimer: number | null = null;
 let stream: EventSource | null = null;
 const selectedRunEventIds = ref<Record<string, string>>({});
 
+/** Parent project detail, or project list while thread is still loading. */
+const backToProjectPath = computed(() =>
+  thread.value ? `/projects/${thread.value.projectId}` : "/projects"
+);
+const backToProjectLabel = computed(() =>
+  thread.value ? "← Project" : "← Projects"
+);
+
 type RunEvent = {
   message: Message;
   statusLabel: string | null;
@@ -326,7 +334,7 @@ onUnmounted(() => {
 
 <template>
   <div class="thread-view">
-    <router-link to="/projects" class="back">← Projects</router-link>
+    <router-link :to="backToProjectPath" class="back">{{ backToProjectLabel }}</router-link>
 
     <div v-if="loading" class="state">Loading…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
