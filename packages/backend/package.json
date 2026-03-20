@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.1",
+    "@pixel-org/agent-runner": "workspace:*",
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.0",

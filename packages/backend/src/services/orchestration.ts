@@ -1,0 +1,122 @@
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { runAgent } from "@pixel-org/agent-runner";
+import { db, agents, projects, agentRunRequests } from "../db/index.js";
+import { getAgentDir } from "../storage/index.js";
+
+function normalizeKickoffTitle(title: string | null | undefined): string {
+  return (title ?? "").trim().toLowerCase();
+}
+
+async function resolveLeadAgentId(preferredAgentId: string): Promise<string | null> {
+  const [preferred] = await db.select().from(agents).where(eq(agents.id, preferredAgentId)).limit(1);
+  if (preferred?.isLead) return preferred.id;
+  const [lead] = await db.select().from(agents).where(eq(agents.isLead, true)).limit(1);
+  return lead?.id ?? null;
+}
+
+async function runQueuedRequest(requestId: string): Promise<void> {
+  const [request] = await db.select().from(agentRunRequests).where(eq(agentRunRequests.id, requestId)).limit(1);
+  if (!request) return;
+
+  const [agent] = await db.select().from(agents).where(eq(agents.id, request.agentId)).limit(1);
+  const [project] = await db.select().from(projects).where(eq(projects.id, request.projectId)).limit(1);
+  if (!agent || !project) {
+    await db
+      .update(agentRunRequests)
+      .set({
+        status: "failed",
+        error: "Missing agent or project for run request",
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(agentRunRequests.id, request.id));
+    return;
+  }
+
+  await db
+    .update(agentRunRequests)
+    .set({
+      status: "running",
+      startedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(agentRunRequests.id, request.id));
+
+  try {
+    const task = [
+      "A board kickoff thread has been created.",
+      `Project ID: ${request.projectId}`,
+      `Thread ID: ${request.threadId}`,
+      `Reason: ${request.reason}`,
+      "Model policy: auto.",
+      "Read project goals and react in the kickoff thread with an actionable leadership response.",
+      project.goals ? `Project goals:\n${project.goals}` : "Project goals are currently empty.",
+    ].join("\n");
+    const result = await runAgent({
+      provider: "cursor",
+      role: agent.role,
+      task,
+      cwd: getAgentDir({ id: agent.id, role: agent.role }),
+      agentId: agent.id,
+      backendUrl: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",
+      env: {
+        PIXEL_RUN_REASON: request.reason,
+        PIXEL_MODEL: request.model,
+      },
+    });
+
+    await db
+      .update(agentRunRequests)
+      .set({
+        status: result.success ? "done" : "failed",
+        error: result.success ? null : (result.stderr || "Agent run failed"),
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(agentRunRequests.id, request.id));
+  } catch (error) {
+    await db
+      .update(agentRunRequests)
+      .set({
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown orchestration error",
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(agentRunRequests.id, request.id));
+  }
+}
+
+export async function enqueueKickoffLeadRun(params: {
+  projectId: string;
+  threadId: string;
+  title: string | null | undefined;
+  preferredAgentId: string;
+}): Promise<void> {
+  if (normalizeKickoffTitle(params.title) !== "board kickoff") return;
+  const leadAgentId = await resolveLeadAgentId(params.preferredAgentId);
+  if (!leadAgentId) return;
+
+  const idempotencyKey = `kickoff_spawn:${params.projectId}:${params.threadId}:${leadAgentId}`;
+  const [existing] = await db
+    .select()
+    .from(agentRunRequests)
+    .where(eq(agentRunRequests.idempotencyKey, idempotencyKey))
+    .limit(1);
+  if (existing) return;
+
+  const requestId = randomUUID();
+  await db.insert(agentRunRequests).values({
+    id: requestId,
+    projectId: params.projectId,
+    threadId: params.threadId,
+    agentId: leadAgentId,
+    reason: "kickoff_created",
+    model: "auto",
+    idempotencyKey,
+    status: "queued",
+  });
+
+  void runQueuedRequest(requestId);
+}

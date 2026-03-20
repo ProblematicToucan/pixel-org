@@ -9,8 +9,9 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 
 import express from "express";
 import cors from "cors";
-import { db, agents, projects, threads, messages } from "./db/index.js";
+import { db, agents, projects, threads, messages, agentRunRequests } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
+import { enqueueKickoffLeadRun } from "./services/orchestration.js";
 import {
   provisionAgentWorkspace,
   getAgentsMdConfigPointer,
@@ -206,15 +207,31 @@ app.post("/agents/hire", async (req, res) => {
 app.patch("/agents/:id", async (req, res) => {
   try {
     const id = req.params.id?.trim();
-    const { name, role, config } = req.body;
+    const { name, role, config, awakeEnabled, awakeIntervalMinutes } = req.body;
     if (!id) {
       res.status(400).json({ error: "Invalid agent id" });
       return;
     }
-    const updates: { name?: string; role?: string; config?: string | null; updatedAt?: Date } = {};
+    const updates: {
+      name?: string;
+      role?: string;
+      config?: string | null;
+      awakeEnabled?: boolean;
+      awakeIntervalMinutes?: number;
+      updatedAt?: Date;
+    } = {};
     if (typeof name === "string") updates.name = name.trim();
     if (typeof role === "string") updates.role = role.trim();
     if (config !== undefined) updates.config = config === null || config === "" ? null : String(config).trim();
+    if (typeof awakeEnabled === "boolean") updates.awakeEnabled = awakeEnabled;
+    if (awakeIntervalMinutes !== undefined) {
+      const parsed = Number(awakeIntervalMinutes);
+      if (!Number.isFinite(parsed) || parsed < 3) {
+        res.status(400).json({ error: "awakeIntervalMinutes must be a number >= 3" });
+        return;
+      }
+      updates.awakeIntervalMinutes = Math.floor(parsed);
+    }
     updates.updatedAt = new Date();
     if (Object.keys(updates).filter((k) => k !== "updatedAt").length === 0) {
       res.status(400).json({ error: "No valid fields to update" });
@@ -364,6 +381,12 @@ app.post("/projects/:id/threads", async (req, res) => {
       agentId: String(agentId).trim(),
       title: title != null ? String(title).trim() : null,
     });
+    await enqueueKickoffLeadRun({
+      projectId,
+      threadId,
+      title: title != null ? String(title).trim() : null,
+      preferredAgentId: String(agentId).trim(),
+    });
     res.status(201).json({
       success: true,
       id: threadId,
@@ -373,6 +396,22 @@ app.post("/projects/:id/threads", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create thread" });
+  }
+});
+
+app.get("/threads/:id/runs", async (req, res) => {
+  try {
+    const threadId = req.params.id?.trim();
+    if (!threadId) {
+      res.status(400).json({ error: "Invalid thread id" });
+      return;
+    }
+    const rows = await db.select().from(agentRunRequests).where(eq(agentRunRequests.threadId, threadId));
+    rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch thread run requests" });
   }
 });
 

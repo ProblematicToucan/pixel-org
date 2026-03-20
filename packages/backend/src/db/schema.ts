@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
 /** UUID primary key for SQLite (no native UUID; store as text, generate in app). */
@@ -15,6 +15,10 @@ export const agents = pgTable("agents", {
   isLead: boolean("is_lead").default(false),
   parentId: text("parent_id").references((): any => agents.id),
   config: text("config"),
+  awakeEnabled: boolean("awake_enabled").default(true).notNull(),
+  awakeIntervalMinutes: integer("awake_interval_minutes").default(30).notNull(),
+  lastAwakeAt: timestamp("last_awake_at", { withTimezone: true }),
+  nextAwakeAt: timestamp("next_awake_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -65,3 +69,37 @@ export const messages = pgTable("messages", {
 
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
+
+/** Agent run requests (kickoff/scheduler orchestration with idempotency + status). */
+export const agentRunRequests = pgTable(
+  "agent_run_requests",
+  {
+    id: uuid(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    reason: text("reason").notNull(),
+    model: text("model").notNull().default("auto"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("queued"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    agentRunRequestsIdempotencyKeyUnique: uniqueIndex("agent_run_requests_idempotency_key_unique").on(
+      table.idempotencyKey
+    ),
+  })
+);
+
+export type AgentRunRequest = typeof agentRunRequests.$inferSelect;
+export type NewAgentRunRequest = typeof agentRunRequests.$inferInsert;

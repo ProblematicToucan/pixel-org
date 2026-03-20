@@ -33,6 +33,10 @@ export interface Agent {
   isLead: boolean;
   parentId: string | null;
   config: string | null;
+  awakeEnabled: boolean;
+  awakeIntervalMinutes: number;
+  lastAwakeAt: string | null;
+  nextAwakeAt: string | null;
   configDisplay?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +68,22 @@ export interface Message {
   createdAt: string;
 }
 
+export interface AgentRunRequest {
+  id: string;
+  projectId: string;
+  threadId: string;
+  agentId: string;
+  reason: string;
+  model: string;
+  idempotencyKey: string;
+  status: "queued" | "running" | "done" | "failed";
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface VisibleProject {
   projectId: string;
   artifactsPath: string;
@@ -86,7 +106,13 @@ export const api = {
     fetchApi<VisibleAgentWork[]>("/agents/" + encodeURIComponent(id) + "/visible-work"),
   updateAgent: (
     id: string,
-    body: { name?: string; role?: string; config?: string | null }
+    body: {
+      name?: string;
+      role?: string;
+      config?: string | null;
+      awakeEnabled?: boolean;
+      awakeIntervalMinutes?: number;
+    }
   ) =>
     fetchApi<{ success: boolean }>("/agents/" + encodeURIComponent(id), {
       method: "PATCH",
@@ -123,6 +149,8 @@ export const api = {
 
   getThreadMessages: (threadId: string) =>
     fetchApi<Message[]>("/threads/" + encodeURIComponent(threadId) + "/messages"),
+  getThreadRuns: (threadId: string) =>
+    fetchApi<AgentRunRequest[]>("/threads/" + encodeURIComponent(threadId) + "/runs"),
   postMessage: (
     threadId: string,
     body:

@@ -25,6 +25,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.4.1
         version: 0.4.1
+      '@pixel-org/agent-runner':
+        specifier: workspace:*
+        version: link:../agent-runner
       cors:
         specifier: ^2.8.6
         version: 2.8.6

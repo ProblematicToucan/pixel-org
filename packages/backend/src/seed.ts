@@ -5,6 +5,7 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { migrate } from "drizzle-orm/pglite/migrator";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..", "..", "..");
@@ -18,6 +19,9 @@ import { getAgentsMdConfigPointer, provisionAgentWorkspace } from "./storage/ind
 const EXAMPLE_LEAD_NAME = "Lead";
 
 async function seed() {
+  const migrationsFolder = path.join(__dirname, "..", "drizzle");
+  await migrate(db as any, { migrationsFolder });
+
   const [existing] = await db
     .select()
     .from(agents)

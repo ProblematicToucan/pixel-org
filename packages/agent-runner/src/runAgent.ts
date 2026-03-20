@@ -91,7 +91,7 @@ function getCliInvocation(
 ): { command: string; args: string[] } {
   switch (provider) {
     case "cursor": {
-      const args = ["--print", "--trust", "--workspace", cwd];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
@@ -101,7 +101,7 @@ function getCliInvocation(
     case "claude-code":
       return { command: "claude-code", args: [task] };
     default: {
-      const args = ["--print", "--trust", "--workspace", cwd];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
