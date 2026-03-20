@@ -61,7 +61,13 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     actorName: agent.name,
     content: [
       "Status: Started",
-      `Objective: ${request.reason === "kickoff_created" ? "Kickoff response" : "Awake check and task execution"} for project ${request.projectId}`,
+      `Objective: ${
+        request.reason === "kickoff_created"
+          ? "Kickoff response"
+          : request.reason === "thread_message"
+            ? "Respond to new thread message"
+            : "Awake check and task execution"
+      } for project ${request.projectId}`,
       `Run: ${request.id} (${request.reason}, model=${request.model})`,
     ].join("\n"),
   });
@@ -70,12 +76,14 @@ async function runQueuedRequest(requestId: string): Promise<void> {
     const task = [
       request.reason === "kickoff_created"
         ? "A board kickoff thread has been created."
-        : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
+        : request.reason === "thread_message"
+          ? "A new message was posted in one of your owned threads. Review it and respond with next actions."
+          : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
       `Project ID: ${request.projectId}`,
       `Thread ID: ${request.threadId}`,
       `Reason: ${request.reason}`,
       "Model policy: auto.",
-      "Wake protocol for scheduled_awake:",
+      "Run protocol:",
       "- Call pixel_get_context first.",
       "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
       "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
@@ -174,7 +182,7 @@ async function enqueueRun(params: {
   projectId: string;
   threadId: string;
   agentId: string;
-  reason: "kickoff_created" | "scheduled_awake";
+  reason: "kickoff_created" | "scheduled_awake" | "thread_message";
   idempotencyKey: string;
 }): Promise<void> {
   const [existing] = await db
@@ -215,6 +223,42 @@ export async function enqueueKickoffLeadRun(params: {
     threadId: params.threadId,
     agentId: leadAgentId,
     reason: "kickoff_created",
+    idempotencyKey,
+  });
+}
+
+export async function enqueueThreadOwnerRunOnMessage(params: {
+  threadId: string;
+  messageId: string;
+  actorType: "agent" | "board";
+  actorAgentId: string | null;
+}): Promise<void> {
+  const [thread] = await db.select().from(threads).where(eq(threads.id, params.threadId)).limit(1);
+  if (!thread) return;
+
+  // Avoid self-trigger loops when owner posts progress/status.
+  if (params.actorType === "agent" && params.actorAgentId === thread.agentId) {
+    return;
+  }
+
+  const [activeForOwner] = await db
+    .select()
+    .from(agentRunRequests)
+    .where(
+      and(
+        eq(agentRunRequests.agentId, thread.agentId),
+        or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running"))
+      )
+    )
+    .limit(1);
+  if (activeForOwner) return;
+
+  const idempotencyKey = `thread_message:${thread.projectId}:${thread.id}:${params.messageId}:${thread.agentId}`;
+  await enqueueRun({
+    projectId: thread.projectId,
+    threadId: thread.id,
+    agentId: thread.agentId,
+    reason: "thread_message",
     idempotencyKey,
   });
 }

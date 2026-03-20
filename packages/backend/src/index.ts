@@ -11,7 +11,12 @@ import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages, agentRunRequests } from "./db/index.js";
 import { getVisibleWork } from "./services/visible-work.js";
-import { enqueueKickoffLeadRun, runAwakeCycle, startAwakeScheduler } from "./services/orchestration.js";
+import {
+  enqueueKickoffLeadRun,
+  enqueueThreadOwnerRunOnMessage,
+  runAwakeCycle,
+  startAwakeScheduler,
+} from "./services/orchestration.js";
 import {
   provisionAgentWorkspace,
   getAgentsMdConfigPointer,
@@ -616,6 +621,14 @@ app.post("/threads/:id/messages", async (req, res) => {
       createdAt,
     };
     await db.insert(messages).values(inserted);
+    void enqueueThreadOwnerRunOnMessage({
+      threadId,
+      messageId,
+      actorType: normalizedActorType as "agent" | "board",
+      actorAgentId: normalizedActorType === "agent" ? normalizedAgentId : null,
+    }).catch((err) => {
+      console.error("Failed to enqueue thread-message owner run:", err);
+    });
     emitThreadMessage(threadId, {
       ...inserted,
       createdAt: createdAt.toISOString(),
