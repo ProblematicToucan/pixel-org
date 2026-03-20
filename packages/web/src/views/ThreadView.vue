@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
-import { api, type Message, type Thread, type Agent } from "../api";
+import { API_BASE, api, type Message, type Thread, type Agent } from "../api";
 
 const route = useRoute();
 const threadId = computed(() => route.params.id as string);
@@ -15,10 +15,15 @@ const posting = ref(false);
 const newContent = ref("");
 const newAgentId = ref("");
 const BOARD_OPTION = "__board__";
+let fallbackPollTimer: number | null = null;
+let stream: EventSource | null = null;
 
-async function loadThreadAndMessages() {
+async function loadThreadAndMessages(options?: { background?: boolean }) {
   if (!threadId.value) return;
-  loading.value = true;
+  const isBackground = options?.background === true;
+  if (!isBackground) {
+    loading.value = true;
+  }
   error.value = null;
   try {
     const [projects, messagesRes, agentsRes] = await Promise.all([
@@ -41,7 +46,9 @@ async function loadThreadAndMessages() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load";
   } finally {
-    loading.value = false;
+    if (!isBackground) {
+      loading.value = false;
+    }
   }
 }
 
@@ -77,12 +84,49 @@ function agentName(id: string) {
 }
 
 function messageAuthor(m: Message) {
-  if (m.actorType === "board") return m.actorName || "Board";
+  if (m.actorType === "board") {
+    const actor = (m.actorName || "Board").trim();
+    if (actor.startsWith("Unknown agent (agent id missing:")) {
+      return "System (unresolved agent identity)";
+    }
+    return actor;
+  }
+  if (m.actorName?.trim()) return m.actorName.trim();
   if (m.agentId) return agentName(m.agentId);
-  return "Unknown";
+  return "Unknown agent";
 }
 
 onMounted(loadThreadAndMessages);
+
+onMounted(() => {
+  const streamUrl = `${API_BASE}/threads/${encodeURIComponent(threadId.value)}/stream`;
+  stream = new EventSource(streamUrl);
+  stream.addEventListener("message", (evt) => {
+    try {
+      const incoming = JSON.parse((evt as MessageEvent<string>).data) as Message;
+      if (!messages.value.some((m) => m.id === incoming.id)) {
+        messages.value.push(incoming);
+      }
+    } catch {
+      // ignore malformed SSE payloads
+    }
+  });
+  stream.addEventListener("error", () => {
+    if (fallbackPollTimer != null) return;
+    fallbackPollTimer = window.setInterval(() => {
+      void loadThreadAndMessages({ background: true });
+    }, 5000);
+  });
+});
+
+onUnmounted(() => {
+  if (fallbackPollTimer != null) {
+    window.clearInterval(fallbackPollTimer);
+  }
+  if (stream != null) {
+    stream.close();
+  }
+});
 </script>
 
 <template>

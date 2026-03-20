@@ -27,6 +27,18 @@ const port = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json());
 
+const MISSING_AGENT_FALLBACK_RE = /^Unknown agent \(agent id missing:/i;
+const threadMessageStreams = new Map<string, Set<express.Response>>();
+
+function emitThreadMessage(threadId: string, payload: unknown): void {
+  const listeners = threadMessageStreams.get(threadId);
+  if (!listeners || listeners.size === 0) return;
+  const event = `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const res of listeners) {
+    res.write(event);
+  }
+}
+
 function buildProjectSlug(name: string): string {
   const base = name
     .trim()
@@ -485,20 +497,69 @@ app.get("/threads/:id/messages", async (req, res) => {
       return;
     }
     const rows = await db.select().from(messages).where(eq(messages.threadId, threadId));
-    res.json(rows);
+    const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
+    const [owner] = thread
+      ? await db.select().from(agents).where(eq(agents.id, thread.agentId)).limit(1)
+      : [];
+    const normalized = rows.map((row) => {
+      if (row.actorType !== "board") return row;
+      const actor = (row.actorName ?? "").trim();
+      if (!MISSING_AGENT_FALLBACK_RE.test(actor) || !thread || !owner) return row;
+      return {
+        ...row,
+        actorType: "agent" as const,
+        agentId: thread.agentId,
+        actorName: owner.name,
+      };
+    });
+    res.json(normalized);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
 
+app.get("/threads/:id/stream", async (req, res) => {
+  const threadId = req.params.id?.trim();
+  if (!threadId) {
+    res.status(400).json({ error: "Invalid thread id" });
+    return;
+  }
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  let listeners = threadMessageStreams.get(threadId);
+  if (!listeners) {
+    listeners = new Set();
+    threadMessageStreams.set(threadId, listeners);
+  }
+  listeners.add(res);
+  res.write("event: connected\ndata: ok\n\n");
+
+  const heartbeat = setInterval(() => {
+    res.write(": keepalive\n\n");
+  }, 20000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    const current = threadMessageStreams.get(threadId);
+    if (!current) return;
+    current.delete(res);
+    if (current.size === 0) {
+      threadMessageStreams.delete(threadId);
+    }
+  });
+});
+
 app.post("/threads/:id/messages", async (req, res) => {
   try {
     const threadId = req.params.id?.trim();
     const { agentId, content, actorType, actorName } = req.body;
-    const normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
-    const normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
-    const normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
+    let normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
+    let normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
+    let normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
     if (!threadId || content == null) {
       res.status(400).json({ error: "thread id and content required" });
       return;
@@ -507,16 +568,38 @@ app.post("/threads/:id/messages", async (req, res) => {
       res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
       return;
     }
+    if (normalizedActorType === "board" && normalizedActorName && MISSING_AGENT_FALLBACK_RE.test(normalizedActorName)) {
+      const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
+      const [owner] = thread
+        ? await db.select().from(agents).where(eq(agents.id, thread.agentId)).limit(1)
+        : [];
+      if (!thread || !owner) {
+        res.status(400).json({ error: "Invalid unresolved-agent fallback actorName" });
+        return;
+      }
+      normalizedActorType = "agent";
+      normalizedAgentId = thread.agentId;
+      normalizedActorName = owner.name;
+    }
     if (normalizedActorType === "agent" && !normalizedAgentId) {
       res.status(400).json({ error: "agentId is required when actorType is agent" });
       return;
     }
-    await db.insert(messages).values({
+    const messageId = randomUUID();
+    const createdAt = new Date();
+    const inserted = {
+      id: messageId,
       threadId,
       agentId: normalizedActorType === "agent" ? normalizedAgentId : null,
       actorType: normalizedActorType,
       actorName: normalizedActorType === "board" ? (normalizedActorName || "Board") : normalizedActorName,
       content: String(content).trim(),
+      createdAt,
+    };
+    await db.insert(messages).values(inserted);
+    emitThreadMessage(threadId, {
+      ...inserted,
+      createdAt: createdAt.toISOString(),
     });
     res.status(201).json({
       success: true,
