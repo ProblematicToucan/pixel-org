@@ -87,6 +87,35 @@ export function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+/** Write UTF-8 file only if content differs (avoids churning mtime and redundant I/O). */
+function writeFileUtf8IfChanged(filePath: string, content: string): void {
+  ensureDir(path.dirname(filePath));
+  if (fs.existsSync(filePath)) {
+    try {
+      const existing = fs.readFileSync(filePath, "utf-8");
+      if (existing === content) return;
+    } catch {
+      // fall through to write
+    }
+  }
+  fs.writeFileSync(filePath, content, "utf-8");
+}
+
+/** Copy file if dest missing or source newer/different size (template/skill updates). */
+function copyFileIfStale(src: string, dest: string): void {
+  if (!fs.existsSync(src)) return;
+  ensureDir(path.dirname(dest));
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(src, dest);
+    return;
+  }
+  const srcStat = fs.statSync(src);
+  const destStat = fs.statSync(dest);
+  if (srcStat.mtimeMs > destStat.mtimeMs || srcStat.size !== destStat.size) {
+    fs.copyFileSync(src, dest);
+  }
+}
+
 /** Ensures agent dir + .cursor/.claude mcp.json + .agents/skills/. */
 export function ensureAgentDir(agent: { id: string; role: string }): string {
   const agentDir = getAgentDir(agent);
@@ -162,8 +191,7 @@ export type AgentForProvision = { id: string; name: string; role: string; config
 /** Write AGENTS.md from name, role, and plain-text config. */
 export function writeAgentsMd(agent: AgentForProvision): void {
   const p = getAgentsMdPath(agent);
-  ensureDir(path.dirname(p));
-  fs.writeFileSync(p, renderLeadOrchestratorAgentsMd(agent), "utf-8");
+  writeFileUtf8IfChanged(p, renderLeadOrchestratorAgentsMd(agent));
 }
 
 /** Write .cursor/.claude mcp.json with Pixel MCP server entry (absolute path, env for this agent). */
@@ -186,8 +214,8 @@ export function writeMcpJson(agent: { id: string; role: string }): void {
     },
   };
   const content = JSON.stringify(payload, null, 2);
-  fs.writeFileSync(cursorPath, content, "utf-8");
-  fs.writeFileSync(claudePath, content, "utf-8");
+  writeFileUtf8IfChanged(cursorPath, content);
+  writeFileUtf8IfChanged(claudePath, content);
 }
 
 /** Copy pixel-backend skill into agent .agents/skills/pixel-backend/. */
@@ -198,12 +226,13 @@ export function copyPixelBackendSkill(agent: { id: string; role: string }): void
   ensureDir(dest);
   const skillFile = path.join(src, "SKILL.md");
   if (fs.existsSync(skillFile)) {
-    fs.copyFileSync(skillFile, path.join(dest, "SKILL.md"));
+    copyFileIfStale(skillFile, path.join(dest, "SKILL.md"));
   }
 }
 
 /**
  * Full provisioning: ensure dir, write AGENTS.md, mcp.json, and copy pixel-backend skill.
+ * Writes are skipped when content is unchanged (reduces I/O on every agent run).
  * Call after creating/updating an agent so the CLI has persona + MCP + skills.
  */
 export function provisionAgentWorkspace(agent: AgentForProvision): string {

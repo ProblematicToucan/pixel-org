@@ -14,7 +14,7 @@ import { getVisibleWork } from "./services/visible-work.js";
 import {
   enqueueKickoffLeadRun,
   enqueueThreadOwnerRunOnMessage,
-  reconcileActiveRuns,
+  reconcileActiveRunsForReadEndpoint,
   runAwakeCycle,
   startAwakeScheduler,
 } from "./services/orchestration.js";
@@ -455,7 +455,7 @@ app.get("/threads/:id/runs", async (req, res) => {
 
 app.get("/runs/active", async (_req, res) => {
   try {
-    await reconcileActiveRuns();
+    await reconcileActiveRunsForReadEndpoint();
     const enriched = await db
       .select({
         run: agentRunRequests,

@@ -457,6 +457,28 @@ export async function reconcileActiveRuns(now = new Date()): Promise<{ reconcile
   return { reconciledDone, reconciledFailed };
 }
 
+const rawReconcileReadCooldownMs = Number(process.env.PIXEL_RECONCILE_ACTIVE_RUNS_MIN_MS ?? "5000");
+const RECONCILE_READ_COOLDOWN_MS = Number.isFinite(rawReconcileReadCooldownMs)
+  ? Math.max(0, Math.floor(rawReconcileReadCooldownMs))
+  : 5000;
+let lastReconcileForReadAt = 0;
+
+/**
+ * Throttled reconciliation for read-heavy endpoints (e.g. GET /runs/active).
+ * Awake scheduler and explicit orchestration calls use {@link reconcileActiveRuns} directly.
+ */
+export async function reconcileActiveRunsForReadEndpoint(now = new Date()): Promise<void> {
+  const nowMs = now.getTime();
+  if (
+    RECONCILE_READ_COOLDOWN_MS > 0 &&
+    nowMs - lastReconcileForReadAt < RECONCILE_READ_COOLDOWN_MS
+  ) {
+    return;
+  }
+  lastReconcileForReadAt = nowMs;
+  await reconcileActiveRuns(now);
+}
+
 async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
   const [activeForAgent] = await db
     .select()
