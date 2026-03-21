@@ -30,6 +30,11 @@ export interface RunAgentOptions {
   agentId?: string;
   /** Backend base URL (e.g. http://localhost:3000). When set, passed as PIXEL_BACKEND_URL for the Pixel MCP server. */
   backendUrl?: string;
+  /**
+   * Model id for Cursor `agent` (`--model`) and `PIXEL_MODEL` env.
+   * Should match the orchestration run record. Default `"auto"`.
+   */
+  model?: string;
   /** Extra env vars (e.g. PIXEL_AGENT_ROLE is set from role) */
   env?: Record<string, string>;
   /** Optional callback fired immediately after child process spawn. */
