@@ -2,11 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api, type Project, type Agent, type ThreadStatus } from "../api";
-import {
-  THREAD_STATUS_OPTIONS,
-  formatThreadStatus,
-  normalizeThreadStatus,
-} from "../threadStatus";
+import { THREAD_STATUS_OPTIONS, normalizeThreadStatus } from "../threadStatus";
 
 const route = useRoute();
 const projectId = computed(() => route.params.id as string);
@@ -42,6 +38,8 @@ async function maybeCreateBoardKickoff(goals: string) {
   const created = await api.createThread(projectId.value, {
     agentId: boardAgentId,
     title: "Board kickoff",
+    /** So the kickoff thread is active work and lead/agent runs align with orchestration. */
+    status: "in_progress",
   });
 
   await api.postBoardMessage(created.id, {
@@ -235,20 +233,18 @@ onMounted(load);
         </div>
         <ul class="thread-list">
           <li v-for="t in threads" :key="t.id" class="thread-item">
-            <div class="thread-row">
-              <router-link :to="'/threads/' + t.id" class="thread-link">
+            <router-link :to="'/threads/' + t.id" class="thread-link">
+              <div class="thread-title-line">
                 <span class="title">{{ t.title || "Untitled" }}</span>
-                <span class="meta">by {{ agentName(t.agentId) }} · {{ new Date(t.createdAt).toLocaleString() }}</span>
-              </router-link>
-              <div class="thread-board-status" @click.stop>
-                <span class="status-badge" :class="'status-' + normalizeThreadStatus(t.status)">{{
-                  formatThreadStatus(t.status)
-                }}</span>
                 <select
-                  class="input status-select"
+                  class="badge-select"
+                  :class="'status-' + normalizeThreadStatus(t.status)"
                   :value="normalizeThreadStatus(t.status)"
                   :disabled="statusUpdating[t.id]"
-                  title="Set thread status (Board)"
+                  aria-label="Thread status"
+                  title="Thread status (Board)"
+                  @click.stop
+                  @mousedown.stop
                   @change="
                     onThreadStatusChange(
                       t.id,
@@ -261,7 +257,8 @@ onMounted(load);
                   </option>
                 </select>
               </div>
-            </div>
+              <span class="meta">by {{ agentName(t.agentId) }} · {{ new Date(t.createdAt).toLocaleString() }}</span>
+            </router-link>
           </li>
         </ul>
         <p v-if="!threads.length" class="empty">No threads yet. Create one above.</p>
@@ -360,53 +357,59 @@ h1 {
 .filter-select {
   min-width: 10rem;
 }
-.thread-row {
+.thread-title-line {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  justify-content: space-between;
-}
-.thread-link {
-  flex: 1;
-  min-width: 12rem;
-}
-.thread-board-status {
-  display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
+  gap: 0.5rem 0.65rem;
+  margin-bottom: 0.35rem;
 }
-.status-badge {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.45rem;
+.thread-title-line .title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.badge-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0.22rem 1.45rem 0.22rem 0.55rem;
   border-radius: 999px;
   border: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.35;
+  cursor: pointer;
+  background-color: var(--surface);
   color: var(--muted);
-  white-space: nowrap;
+  max-width: 12rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.4rem center;
+  background-size: 0.65rem;
 }
-.status-badge.status-not_started {
+.badge-select:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.badge-select.status-not_started {
   border-color: var(--muted);
+  color: var(--muted);
 }
-.status-badge.status-in_progress {
+.badge-select.status-in_progress {
   border-color: var(--accent);
   color: var(--accent);
 }
-.status-badge.status-completed {
+.badge-select.status-completed {
   border-color: #2e7d32;
   color: #2e7d32;
 }
-.status-badge.status-blocked {
+.badge-select.status-blocked {
   border-color: var(--error);
   color: var(--error);
 }
-.status-badge.status-cancelled {
-  opacity: 0.85;
-}
-.status-select {
-  min-width: 10rem;
-  font-size: 0.85rem;
-  padding: 0.35rem 0.5rem;
+.badge-select.status-cancelled {
+  opacity: 0.88;
+  border-color: var(--muted);
 }
 .form {
   display: flex;
@@ -463,9 +466,9 @@ select.input {
 .thread-item .thread-link:hover {
   border-color: var(--accent);
 }
-.thread-link .title {
+.thread-link .thread-title-line .title {
   font-weight: 500;
-  display: block;
+  display: inline;
 }
 .thread-link .meta {
   font-size: 0.85rem;

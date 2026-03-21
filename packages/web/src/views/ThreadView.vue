@@ -2,11 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { API_BASE, api, type Message, type Thread, type Agent, type ThreadStatus } from "../api";
-import {
-  THREAD_STATUS_OPTIONS,
-  formatThreadStatus,
-  normalizeThreadStatus,
-} from "../threadStatus";
+import { THREAD_STATUS_OPTIONS, normalizeThreadStatus } from "../threadStatus";
 
 const route = useRoute();
 const threadId = computed(() => route.params.id as string);
@@ -382,33 +378,30 @@ onUnmounted(() => {
     <div v-if="loading" class="state">Loading…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>
     <template v-else>
-      <h1>{{ thread ? (thread.title || "Thread") : "Thread" }}</h1>
-      <p v-if="thread" class="meta">Owner: {{ agentName(thread.agentId) }}</p>
-
-      <section v-if="thread" class="thread-status-board" aria-label="Thread status (Board)">
-        <span
-          class="status-badge"
+      <div class="thread-title-line">
+        <h1>{{ thread ? (thread.title || "Thread") : "Thread" }}</h1>
+        <select
+          v-if="thread"
+          class="badge-select"
           :class="'status-' + normalizeThreadStatus(thread.status)"
-          >{{ formatThreadStatus(thread.status) }}</span
+          :value="normalizeThreadStatus(thread.status)"
+          :disabled="statusPatching"
+          aria-label="Thread status"
+          title="Thread status (Board)"
+          @change="
+            updateThreadStatus(($event.target as HTMLSelectElement).value as ThreadStatus)
+          "
         >
-        <label class="status-board-control">
-          <span class="status-board-label">Set status</span>
-          <select
-            class="input status-select"
-            :value="normalizeThreadStatus(thread.status)"
-            :disabled="statusPatching"
-            title="Board of Directors — thread work item status"
-            @change="
-              updateThreadStatus(($event.target as HTMLSelectElement).value as ThreadStatus)
-            "
-          >
-            <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-        </label>
-        <p class="status-board-hint">Thread status is the overall work item (like a GitHub issue), separate from agent run messages.</p>
-      </section>
+          <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+      </div>
+      <p v-if="thread" class="meta">
+        Owner: {{ agentName(thread.agentId) }}
+        <span class="meta-sep">·</span>
+        <span class="meta-muted">Work item status (separate from agent run updates)</span>
+      </p>
 
       <section class="messages">
         <ul class="message-list">
@@ -495,78 +488,74 @@ onUnmounted(() => {
 .back:hover {
   color: var(--fg);
 }
-h1 {
+.thread-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+.thread-title-line h1 {
   font-size: 1.5rem;
-  margin: 0 0 0.25rem;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.badge-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0.28rem 1.5rem 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.35;
+  cursor: pointer;
+  background-color: var(--surface);
+  color: var(--muted);
+  flex-shrink: 0;
+  max-width: 13rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 0.65rem;
+}
+.badge-select:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.badge-select.status-not_started {
+  border-color: var(--muted);
+  color: var(--muted);
+}
+.badge-select.status-in_progress {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.badge-select.status-completed {
+  border-color: #2e7d32;
+  color: #2e7d32;
+}
+.badge-select.status-blocked {
+  border-color: var(--error);
+  color: var(--error);
+}
+.badge-select.status-cancelled {
+  opacity: 0.88;
+  border-color: var(--muted);
 }
 .meta {
   color: var(--muted);
   font-size: 0.9rem;
   margin: 0 0 1rem;
 }
-.thread-status-board {
-  margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
+.meta-sep {
+  margin: 0 0.35rem;
 }
-.status-badge {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  white-space: nowrap;
-}
-.status-badge.status-not_started {
-  border-color: var(--muted);
-}
-.status-badge.status-in_progress {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.status-badge.status-completed {
-  border-color: #2e7d32;
-  color: #2e7d32;
-}
-.status-badge.status-blocked {
-  border-color: var(--error);
-  color: var(--error);
-}
-.status-badge.status-cancelled {
-  opacity: 0.85;
-}
-.status-board-control {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-.status-board-label {
-  font-size: 0.72rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.thread-status-board .status-select {
-  min-width: 12rem;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-}
-.status-board-hint {
-  width: 100%;
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--muted);
-  flex-basis: 100%;
+.meta-muted {
+  font-size: 0.85rem;
+  opacity: 0.92;
 }
 .messages {
   margin-bottom: 1.5rem;
