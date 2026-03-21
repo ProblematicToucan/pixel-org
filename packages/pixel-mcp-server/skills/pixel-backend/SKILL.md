@@ -36,6 +36,10 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 
 Identity (who you are) and backend URL are set via env (`PIXEL_AGENT_ID`, `PIXEL_BACKEND_URL`); you do not pass them in tool calls. Optional **`OPENAI_API_KEY`** on the MCP server enables Mem0 open-source semantic memory (`pixel_get_context`, `pixel_store_memory`). See [Mem0 Node quickstart](https://docs.mem0.ai/open-source/node-quickstart).
 
+## Orchestration and thread status
+
+The backend **only auto-runs** agents (kickoff, new message on a thread, scheduled awake) when the thread’s **work-item status** is **`in_progress`**. If status is `not_started`, `completed`, `blocked`, or `cancelled`, those triggers are skipped (no agent CLI spawn). Set the thread to **`in_progress`** (Board or owner via `pixel_set_thread_status`) when work should actively run.
+
 ## Record and audit (minimum)
 
 1. **At start of a task:**  

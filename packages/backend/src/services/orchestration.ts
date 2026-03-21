@@ -12,6 +12,11 @@ function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
 }
 
+/** Only `in_progress` threads trigger kickoff, message-driven, and awake agent runs (avoids runs on not_started / completed / blocked / cancelled). */
+function threadStatusAllowsAutomatedAgentRun(status: string | null | undefined): boolean {
+  return status === "in_progress";
+}
+
 const MAX_CONCURRENT_AGENT_RUNS = Number(process.env.PIXEL_MAX_CONCURRENT_AGENT_RUNS ?? "4");
 const EFFECTIVE_MAX_CONCURRENT_AGENT_RUNS = Number.isFinite(MAX_CONCURRENT_AGENT_RUNS)
   ? Math.max(1, Math.floor(MAX_CONCURRENT_AGENT_RUNS))
@@ -115,6 +120,27 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       projectId: request.projectId,
       agentId: request.agentId,
     });
+    return;
+  }
+
+  const [threadRow] = await db.select().from(threads).where(eq(threads.id, request.threadId)).limit(1);
+  if (!threadRow || !threadStatusAllowsAutomatedAgentRun(threadRow.status)) {
+    const errDetail = !threadRow
+      ? "Thread not found for run request"
+      : `Automated agent runs require thread status in_progress (current: ${threadRow.status})`;
+    await db
+      .update(agentRunRequests)
+      .set({
+        status: "failed",
+        error: errDetail,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(agentRunRequests.id, request.id));
+    const ownerAgentId = claimedAgentId ?? request.agentId;
+    runningAgentIds.delete(ownerAgentId);
+    activeProcessCount = Math.max(0, activeProcessCount - 1);
+    scheduleQueueDispatcher();
     return;
   }
 
@@ -322,6 +348,7 @@ async function enqueuePendingFollowupIfNeeded(request: {
   const [thread] = await db.select().from(threads).where(eq(threads.id, request.threadId)).limit(1);
   if (!thread?.pendingOwnerRun) return;
   if (thread.agentId !== request.agentId) return;
+  if (!threadStatusAllowsAutomatedAgentRun(thread.status)) return;
 
   const [activeForOwner] = await db
     .select()
@@ -359,6 +386,9 @@ export async function enqueueKickoffLeadRun(params: {
   const leadAgentId = await resolveLeadAgentId(params.preferredAgentId);
   if (!leadAgentId) return;
 
+  const [thread] = await db.select().from(threads).where(eq(threads.id, params.threadId)).limit(1);
+  if (!thread || !threadStatusAllowsAutomatedAgentRun(thread.status)) return;
+
   const idempotencyKey = `kickoff_spawn:${params.projectId}:${params.threadId}:${leadAgentId}`;  
   await enqueueRun({
     projectId: params.projectId,
@@ -377,6 +407,7 @@ export async function enqueueThreadOwnerRunOnMessage(params: {
 }): Promise<void> {
   const [thread] = await db.select().from(threads).where(eq(threads.id, params.threadId)).limit(1);
   if (!thread) return;
+  if (!threadStatusAllowsAutomatedAgentRun(thread.status)) return;
 
   // Avoid self-trigger loops when owner posts progress/status.
   if (params.actorType === "agent" && params.actorAgentId === thread.agentId) {
@@ -508,10 +539,11 @@ async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
   if (activeForAgent) return 0;
 
   const ownedThreads = await db.select().from(threads).where(eq(threads.agentId, agentId));
-  if (ownedThreads.length === 0) return 0;
+  const activeThreads = ownedThreads.filter((t) => threadStatusAllowsAutomatedAgentRun(t.status));
+  if (activeThreads.length === 0) return 0;
 
   const withLatest = await Promise.all(
-    ownedThreads.map(async (thread) => {
+    activeThreads.map(async (thread) => {
       const threadMessages = await db.select().from(messages).where(eq(messages.threadId, thread.id));
       const sorted = [...threadMessages].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
