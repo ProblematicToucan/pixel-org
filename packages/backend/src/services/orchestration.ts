@@ -17,6 +17,43 @@ function threadStatusAllowsAutomatedAgentRun(status: string | null | undefined):
   return status === "in_progress";
 }
 
+function fallbackObjectiveForRunReason(reason: string): string {
+  switch (reason) {
+    case "kickoff_created":
+      return "Kickoff response";
+    case "thread_message":
+      return "Respond to thread message";
+    case "scheduled_awake":
+      return "Scheduled awake run";
+    default:
+      return "Agent run";
+  }
+}
+
+/**
+ * stderr from `agent` (Cursor CLI) — often upstream HTTP 504 / unavailable, not Pixel backend.
+ * Produces readable thread text without duplicated "Error:" prefixes.
+ */
+function formatAgentCliFailureForThread(stderr: string | undefined | null, exitCode: number): string {
+  const raw = (stderr ?? "").trim() || "Unknown error";
+  const cleaned = raw.replace(/^(Error:\s*)+/i, "").trim();
+  const parts = [`Detail: ${cleaned}`, `Exit code: ${exitCode}`];
+  const lower = cleaned.toLowerCase();
+  if (
+    lower.includes("504") ||
+    lower.includes("502") ||
+    lower.includes("503") ||
+    lower.includes("unavailable") ||
+    lower.includes("gateway timeout") ||
+    lower.includes("econnrefused")
+  ) {
+    parts.push(
+      "Likely cause: Cursor Agent CLI could not reach Cursor’s cloud API (timeout, outage, or rate limit). This is not the Pixel backend failing. Retry later; check network, Cursor status, and `agent` CLI login."
+    );
+  }
+  return parts.join("\n");
+}
+
 const MAX_CONCURRENT_AGENT_RUNS = Number(process.env.PIXEL_MAX_CONCURRENT_AGENT_RUNS ?? "4");
 const EFFECTIVE_MAX_CONCURRENT_AGENT_RUNS = Number.isFinite(MAX_CONCURRENT_AGENT_RUNS)
   ? Math.max(1, Math.floor(MAX_CONCURRENT_AGENT_RUNS))
@@ -252,10 +289,11 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
     const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
     if (!hasAgentReply) {
+      const obj = fallbackObjectiveForRunReason(request.reason);
       const fallback = result.success
         ? [
             "Status: Completed",
-            "Objective: Kickoff response",
+            `Objective: ${obj}`,
             "Actions:",
             "- CLI run completed but no thread update was posted by agent.",
             "- Added fallback update for audit continuity.",
@@ -263,9 +301,9 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
           ].join("\n")
         : [
             "Status: Blocked",
-            "Objective: Kickoff response",
+            `Objective: ${obj}`,
             `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
-            `Error: ${result.stderr || "Unknown error"}`,
+            formatAgentCliFailureForThread(result.stderr, result.exitCode),
           ].join("\n");
       await db.insert(messages).values({
         threadId: request.threadId,
@@ -298,9 +336,9 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       actorName: agent.name,
       content: [
         "Status: Blocked",
-        "Objective: Kickoff response",
+        `Objective: ${fallbackObjectiveForRunReason(request.reason)}`,
         `Reason: Orchestration error while launching agent CLI.`,
-        `Error: ${errMsg}`,
+        `Detail: ${errMsg}`,
       ].join("\n"),
     });
   } finally {
