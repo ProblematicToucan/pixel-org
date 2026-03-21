@@ -37,7 +37,7 @@ The **pixel-backend** skill lives in this package so it ships with the app:
 
 - **Path:** `packages/pixel-mcp-server/skills/pixel-backend/SKILL.md`
 
-Use it by copying this `skills/` directory into each agent’s skills location (e.g. `agents/{id}-role/.agents/skills/`) when provisioning, or by pointing your agent CLI at this path. The skill tells the agent how to use the Pixel MCP tools to record work, read context (threads, messages, goals), and stay auditable.
+Use it by copying this `skills/` directory into each agent’s skills location (e.g. `~/.pixel-org/{id}-role/.agents/skills/`) when provisioning, or by pointing your agent CLI at this path. The skill tells the agent how to use the Pixel MCP tools to record work, read context (threads, messages, goals), and stay auditable.
 
 ## Running
 

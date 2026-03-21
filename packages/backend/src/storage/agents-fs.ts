@@ -1,21 +1,21 @@
 import path from "path";
 import fs from "fs";
+import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { renderLeadOrchestratorAgentsMd } from "./agent-template.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Repo root (parent of agents dir). Used for Pixel MCP server path. */
+/** Monorepo root (this package: packages/backend/src/storage → four levels up). */
 export function getRepoRoot(): string {
-  return path.dirname(getAgentsStorageRoot());
+  return path.resolve(__dirname, "..", "..", "..", "..");
 }
 
-/** Default root for agent data: repo_root/agents (or AGENTS_STORAGE_PATH). */
+/** Default: ~/.pixel-org (or AGENTS_STORAGE_PATH). Keeps agent workspaces out of the repo. */
 export function getAgentsStorageRoot(): string {
   const fromEnv = process.env.AGENTS_STORAGE_PATH;
   if (fromEnv) return path.resolve(fromEnv);
-  const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
-  return path.join(repoRoot, "agents");
+  return path.join(homedir(), ".pixel-org");
 }
 
 /** Filesystem-safe slug from agent role (e.g. "Code Engineer" → "code-engineer"). */
@@ -33,14 +33,14 @@ export function getAgentDirName(agent: { id: string; role: string }): string {
   return `${agent.id}-${slug}`;
 }
 
-/** Full path: agents/{agentDirName}/ */
+/** Full path: {storageRoot}/{agentDirName}/ */
 export function getAgentDir(agent: { id: string; role: string }): string {
   const root = getAgentsStorageRoot();
   const dirName = getAgentDirName(agent);
   return path.join(root, dirName);
 }
 
-/** Full path: agents/{agentDirName}/.cursor/mcp.json or .claude/mcp.json (MCP config per agent). */
+/** Full path: {storageRoot}/{agentDirName}/.cursor/mcp.json or .claude/mcp.json (MCP config per agent). */
 export function getMcpConfigPath(agent: { id: string; role: string }): string {
   const cursorPath = path.join(getAgentDir(agent), ".cursor", "mcp.json");
   const claudePath = path.join(getAgentDir(agent), ".claude", "mcp.json");
@@ -61,12 +61,12 @@ export function getAllMcpConfigPaths(agent: { id: string; role: string }): {
   };
 }
 
-/** Full path: agents/{agentDirName}/.agents/skills/ (skills config – one per agent, shared across projects). */
+/** Full path: {storageRoot}/{agentDirName}/.agents/skills/ (skills config – one per agent, shared across projects). */
 export function getSkillsDir(agent: { id: string; role: string }): string {
   return path.join(getAgentDir(agent), ".agents", "skills");
 }
 
-/** Full path: agents/{agentDirName}/{projectId}/ (project = artifacts only). */
+/** Full path: {storageRoot}/{agentDirName}/{projectId}/ (project = artifacts only). */
 export function getProjectDir(
   agent: { id: string; role: string },
   projectId: string
@@ -75,7 +75,7 @@ export function getProjectDir(
   return path.join(getAgentDir(agent), safeProjectId);
 }
 
-/** Full path: agents/{agentDirName}/{projectId}/artifacts/ */
+/** Full path: {storageRoot}/{agentDirName}/{projectId}/artifacts/ */
 export function getArtifactsDir(
   agent: { id: string; role: string },
   projectId: string
@@ -155,7 +155,7 @@ export function ensureAgentProjectLayout(
   return { agentDir, projectDir, artifactsDir };
 }
 
-/** Full path: agents/{agentDirName}/AGENTS.md (persona for CLI). */
+/** Full path: {storageRoot}/{agentDirName}/AGENTS.md (persona for CLI). */
 export function getAgentsMdPath(agent: { id: string; role: string }): string {
   return path.join(getAgentDir(agent), "AGENTS.md");
 }
