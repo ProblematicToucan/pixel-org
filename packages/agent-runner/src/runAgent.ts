@@ -5,6 +5,7 @@ const ROLE_ENV_KEY = "PIXEL_AGENT_ROLE";
 const VISIBLE_WORK_ENV_KEY = "PIXEL_VISIBLE_WORK";
 const AGENT_ID_ENV_KEY = "PIXEL_AGENT_ID";
 const BACKEND_URL_ENV_KEY = "PIXEL_BACKEND_URL";
+const MODEL_ENV_KEY = "PIXEL_MODEL";
 
 /**
  * Invokes the configured agent CLI with the given role and task.
@@ -22,6 +23,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
     visibleWork,
     agentId,
     backendUrl,
+    model = "auto",
     env = {},
     onSpawn,
   } = options;
@@ -29,6 +31,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   const baseEnv: Record<string, string> = {
     ...process.env,
     [ROLE_ENV_KEY]: role,
+    [MODEL_ENV_KEY]: model,
     ...env,
   };
   if (visibleWork != null && visibleWork.length > 0) {
@@ -42,7 +45,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   }
 
   const canReadOutsideWorkspace = visibleWork != null && visibleWork.length > 0;
-  const { command, args } = getCliInvocation(provider, task, cwd, canReadOutsideWorkspace);
+  const { command, args } = getCliInvocation(provider, task, cwd, canReadOutsideWorkspace, model);
 
   return new Promise((resolve) => {
     const proc = spawn(command, args, {
@@ -98,7 +101,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
 /**
  * Map provider + task to CLI command and args.
  * --workspace <cwd>: agent runs in their own dir (so MCP/skills load from there).
- * --model auto: Cursor agent model selection.
+ * --model <id>: Cursor agent model selection (default "auto", synced with PIXEL_MODEL).
  * When canReadOutsideWorkspace (e.g. CEO reviewing Engineer): add --sandbox disabled so the agent
  * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' dirs (e.g. /path/to/engineer/project_1/artifacts).
  */
@@ -106,11 +109,12 @@ function getCliInvocation(
   provider: "cursor" | "claude-code",
   task: string,
   cwd: string,
-  canReadOutsideWorkspace: boolean
+  canReadOutsideWorkspace: boolean,
+  model: string
 ): { command: string; args: string[] } {
   switch (provider) {
     case "cursor": {
-      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", "auto"];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", model];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
@@ -120,7 +124,7 @@ function getCliInvocation(
     case "claude-code":
       return { command: "claude-code", args: [task] };
     default: {
-      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", "auto"];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", model];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
