@@ -26,6 +26,9 @@ import {
 } from "./storage/index.js";
 import { and, asc, desc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
+import { asyncHandler } from "./asyncHandler.js";
+import { HttpError } from "./httpError.js";
+import { reportErrorToHealer } from "./healerClient.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -34,6 +37,12 @@ app.use(cors());
 app.use(express.json());
 
 const MISSING_AGENT_FALLBACK_RE = /^Unknown agent \(agent id missing:/i;
+
+function routeParam(req: express.Request, name: string): string {
+  const v = req.params[name];
+  if (Array.isArray(v)) return (v[0] ?? "").trim();
+  return (v ?? "").trim();
+}
 const threadMessageStreams = new Map<string, Set<express.Response>>();
 
 function emitThreadMessage(threadId: string, payload: unknown): void {
@@ -90,44 +99,50 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "backend" });
 });
 
-app.get("/agents", async (_req, res) => {
-  try {
-    const rows = await db
-      .select()
-      .from(agents)
-      .orderBy(desc(agents.isLead), asc(agents.name));
-    res.json(rows.map(enrichAgentForResponse));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch agents" });
-  }
-});
+app.get(
+  "/agents",
+  asyncHandler(async (_req, res) => {
+    try {
+      const rows = await db
+        .select()
+        .from(agents)
+        .orderBy(desc(agents.isLead), asc(agents.name));
+      res.json(rows.map(enrichAgentForResponse));
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch agents", { cause: err });
+    }
+  })
+);
 
-app.get("/agents/:id", async (req, res) => {
-  try {
-    const id = req.params.id?.trim();
-    if (!id) {
-      res.status(400).json({ error: "Invalid agent id" });
-      return;
+app.get(
+  "/agents/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid agent id" });
+        return;
+      }
+      const rows = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+      if (rows.length === 0) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      res.json(enrichAgentForResponse(rows[0]));
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch agent", { cause: err });
     }
-    const rows = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
-    if (rows.length === 0) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    res.json(enrichAgentForResponse(rows[0]));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch agent" });
-  }
-});
+  })
+);
 
 /**
  * Hiring endpoint: only the single organization lead may hire.
  * New agents are always non-leads (parentId = requester unless overridden; still must be requester).
  */
-app.post("/agents/hire", async (req, res) => {
-  try {
+app.post(
+  "/agents/hire",
+  asyncHandler(async (req, res) => {
+    try {
     const { requesterAgentId, name, role, type, isLead, config, parentId, agentsMd } = req.body as {
       requesterAgentId?: string;
       name?: string;
@@ -208,8 +223,7 @@ app.post("/agents/hire", async (req, res) => {
 
     const [created] = await db.select().from(agents).where(eq(agents.id, newAgentId)).limit(1);
     if (!created) {
-      res.status(500).json({ error: "Failed to load created agent" });
-      return;
+      throw new HttpError(500, "Failed to load created agent");
     }
 
     provisionAgentWorkspace({
@@ -236,15 +250,17 @@ app.post("/agents/hire", async (req, res) => {
       hiredBy: requester.id,
       agent: finalCreated ? enrichAgentForResponse(finalCreated) : enrichAgentForResponse(created),
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to hire agent" });
-  }
-});
+    } catch (err) {
+      throw new HttpError(500, "Failed to hire agent", { cause: err });
+    }
+  })
+);
 
-app.patch("/agents/:id", async (req, res) => {
-  try {
-    const id = req.params.id?.trim();
+app.patch(
+  "/agents/:id",
+  asyncHandler(async (req, res) => {
+    try {
+    const id = routeParam(req, "id");
     const { name, role, config, awakeEnabled, awakeIntervalMinutes } = req.body;
     if (!id) {
       res.status(400).json({ error: "Invalid agent id" });
@@ -316,127 +332,141 @@ app.patch("/agents/:id", async (req, res) => {
       }
     }
     res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to update agent" });
-  }
-});
+    } catch (err) {
+      throw new HttpError(500, "Failed to update agent", { cause: err });
+    }
+  })
+);
 
 /** Work this agent can see: self + all reports (CEO sees everyone, CTO sees Engineers, etc.). */
-app.get("/agents/:id/visible-work", async (req, res) => {
-  try {
-    const id = req.params.id?.trim();
-    if (!id) {
-      res.status(400).json({ error: "Invalid agent id" });
-      return;
+app.get(
+  "/agents/:id/visible-work",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid agent id" });
+        return;
+      }
+      const work = await getVisibleWork(db, id);
+      res.json(work);
+    } catch (err) {
+      throw new HttpError(500, "Failed to get visible work", { cause: err });
     }
-    const work = await getVisibleWork(db, id);
-    res.json(work);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to get visible work" });
-  }
-});
+  })
+);
 
 // --- Projects (like Slack channels) ---
-app.get("/projects", async (_req, res) => {
-  try {
-    const rows = await db.select().from(projects);
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch projects" });
-  }
-});
+app.get(
+  "/projects",
+  asyncHandler(async (_req, res) => {
+    try {
+      const rows = await db.select().from(projects);
+      res.json(rows);
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch projects", { cause: err });
+    }
+  })
+);
 
-app.get("/projects/:id", async (req, res) => {
-  try {
-    const id = req.params.id?.trim();
-    if (!id) {
-      res.status(400).json({ error: "Invalid project id" });
-      return;
+app.get(
+  "/projects/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+      if (rows.length === 0) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      res.json(rows[0]);
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch project", { cause: err });
     }
-    const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
-    if (rows.length === 0) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    res.json(rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch project" });
-  }
-});
+  })
+);
 
-app.post("/projects", async (req, res) => {
-  try {
-    const { name } = req.body;
-    if (!name || typeof name !== "string") {
-      res.status(400).json({ error: "name is required" });
-      return;
+app.post(
+  "/projects",
+  asyncHandler(async (req, res) => {
+    try {
+      const { name } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      const cleanName = name.trim();
+      const cleanSlug = buildProjectSlug(cleanName);
+      await db.insert(projects).values({ name: cleanName, slug: cleanSlug });
+      res.status(201).json({ success: true, name: cleanName, slug: cleanSlug });
+    } catch (err) {
+      throw new HttpError(500, "Failed to create project", { cause: err });
     }
-    const cleanName = name.trim();
-    const cleanSlug = buildProjectSlug(cleanName);
-    await db.insert(projects).values({ name: cleanName, slug: cleanSlug });
-    res.status(201).json({ success: true, name: cleanName, slug: cleanSlug });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to create project" });
-  }
-});
+  })
+);
 
-app.patch("/projects/:id", async (req, res) => {
-  try {
-    const id = req.params.id?.trim();
-    const { name, goals } = req.body;
-    if (!id) {
-      res.status(400).json({ error: "Invalid project id" });
-      return;
+app.patch(
+  "/projects/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      const { name, goals } = req.body;
+      if (!id) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const updates: { name?: string; goals?: string | null } = {};
+      if (typeof name === "string") updates.name = name.trim();
+      if (goals !== undefined) updates.goals = goals === null || goals === "" ? null : String(goals).trim();
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: "No valid fields to update" });
+        return;
+      }
+      await db.update(projects).set(updates).where(eq(projects.id, id));
+      res.json({ success: true });
+    } catch (err) {
+      throw new HttpError(500, "Failed to update project", { cause: err });
     }
-    const updates: { name?: string; goals?: string | null } = {};
-    if (typeof name === "string") updates.name = name.trim();
-    if (goals !== undefined) updates.goals = goals === null || goals === "" ? null : String(goals).trim();
-    if (Object.keys(updates).length === 0) {
-      res.status(400).json({ error: "No valid fields to update" });
-      return;
-    }
-    await db.update(projects).set(updates).where(eq(projects.id, id));
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to update project" });
-  }
-});
+  })
+);
 
 // --- Threads (work in a project; one agent owns, anyone can discuss) ---
-app.get("/projects/:id/threads", async (req, res) => {
-  try {
-    const projectId = req.params.id?.trim();
-    const statusFilter = req.query.status as string | undefined;
-    if (!projectId) {
-      res.status(400).json({ error: "Invalid project id" });
-      return;
+app.get(
+  "/projects/:id/threads",
+  asyncHandler(async (req, res) => {
+    try {
+      const projectId = routeParam(req, "id");
+      const statusFilter = req.query.status as string | undefined;
+      if (!projectId) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
+      let rows;
+      if (statusFilter && validStatuses.includes(statusFilter as typeof validStatuses[number])) {
+        rows = await db
+          .select()
+          .from(threads)
+          .where(and(eq(threads.projectId, projectId), eq(threads.status, statusFilter as typeof validStatuses[number])));
+      } else {
+        rows = await db.select().from(threads).where(eq(threads.projectId, projectId));
+      }
+      res.json(rows);
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch threads", { cause: err });
     }
-    const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
-    let rows;
-    if (statusFilter && validStatuses.includes(statusFilter as typeof validStatuses[number])) {
-      rows = await db
-        .select()
-        .from(threads)
-        .where(and(eq(threads.projectId, projectId), eq(threads.status, statusFilter as typeof validStatuses[number])));
-    } else {
-      rows = await db.select().from(threads).where(eq(threads.projectId, projectId));
-    }
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch threads" });
-  }
-});
+  })
+);
 
-app.post("/projects/:id/threads", async (req, res) => {
-  try {
-    const projectId = req.params.id?.trim();
+app.post(
+  "/projects/:id/threads",
+  asyncHandler(async (req, res) => {
+    try {
+    const projectId = routeParam(req, "id");
     const { agentId, title, requesterAgentId, status } = req.body as {
       agentId?: string;
       title?: string | null;
@@ -496,15 +526,17 @@ app.post("/projects/:id/threads", async (req, res) => {
       agentId: ownerId,
       status: threadStatus,
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to create thread" });
-  }
-});
+    } catch (err) {
+      throw new HttpError(500, "Failed to create thread", { cause: err });
+    }
+  })
+);
 
-app.patch("/threads/:id/status", async (req, res) => {
-  try {
-    const threadId = req.params.id?.trim();
+app.patch(
+  "/threads/:id/status",
+  asyncHandler(async (req, res) => {
+    try {
+    const threadId = routeParam(req, "id");
     const { status, requesterAgentId, actorType } = req.body as {
       status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled";
       requesterAgentId?: string | null;
@@ -574,74 +606,82 @@ app.patch("/threads/:id/status", async (req, res) => {
       createdAt: createdAt.toISOString(),
     });
     res.json({ success: true, status });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to update thread status" });
-  }
-});
-
-app.get("/threads/:id/runs", async (req, res) => {
-  try {
-    const threadId = req.params.id?.trim();
-    if (!threadId) {
-      res.status(400).json({ error: "Invalid thread id" });
-      return;
+    } catch (err) {
+      throw new HttpError(500, "Failed to update thread status", { cause: err });
     }
-    const rows = await db.select().from(agentRunRequests).where(eq(agentRunRequests.threadId, threadId));
-    rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch thread run requests" });
-  }
-});
+  })
+);
 
-app.get("/runs/active", async (_req, res) => {
-  try {
-    await reconcileActiveRunsForReadEndpoint();
-    const enriched = await db
-      .select({
-        run: agentRunRequests,
-        agentName: agents.name,
-        agentRole: agents.role,
-        projectName: projects.name,
-        threadTitle: threads.title,
-      })
-      .from(agentRunRequests)
-      .leftJoin(agents, eq(agentRunRequests.agentId, agents.id))
-      .leftJoin(projects, eq(agentRunRequests.projectId, projects.id))
-      .leftJoin(threads, eq(agentRunRequests.threadId, threads.id))
-      .where(or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running")));
-    enriched.sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime());
-    res.json(
-      enriched.map((row) => ({
-        ...row.run,
-        agentName: row.agentName ?? "Unknown agent",
-        agentRole: row.agentRole ?? null,
-        projectName: row.projectName ?? "Unknown project",
-        threadTitle: row.threadTitle ?? null,
-      }))
-    );
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch active run requests" });
-  }
-});
+app.get(
+  "/threads/:id/runs",
+  asyncHandler(async (req, res) => {
+    try {
+      const threadId = routeParam(req, "id");
+      if (!threadId) {
+        res.status(400).json({ error: "Invalid thread id" });
+        return;
+      }
+      const rows = await db.select().from(agentRunRequests).where(eq(agentRunRequests.threadId, threadId));
+      rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      res.json(rows);
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch thread run requests", { cause: err });
+    }
+  })
+);
 
-app.post("/orchestration/awake/run", async (_req, res) => {
-  try {
-    const result = await runAwakeCycle();
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to run awake cycle" });
-  }
-});
+app.get(
+  "/runs/active",
+  asyncHandler(async (_req, res) => {
+    try {
+      await reconcileActiveRunsForReadEndpoint();
+      const enriched = await db
+        .select({
+          run: agentRunRequests,
+          agentName: agents.name,
+          agentRole: agents.role,
+          projectName: projects.name,
+          threadTitle: threads.title,
+        })
+        .from(agentRunRequests)
+        .leftJoin(agents, eq(agentRunRequests.agentId, agents.id))
+        .leftJoin(projects, eq(agentRunRequests.projectId, projects.id))
+        .leftJoin(threads, eq(agentRunRequests.threadId, threads.id))
+        .where(or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running")));
+      enriched.sort((a, b) => new Date(b.run.updatedAt).getTime() - new Date(a.run.updatedAt).getTime());
+      res.json(
+        enriched.map((row) => ({
+          ...row.run,
+          agentName: row.agentName ?? "Unknown agent",
+          agentRole: row.agentRole ?? null,
+          projectName: row.projectName ?? "Unknown project",
+          threadTitle: row.threadTitle ?? null,
+        }))
+      );
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch active run requests", { cause: err });
+    }
+  })
+);
+
+app.post(
+  "/orchestration/awake/run",
+  asyncHandler(async (_req, res) => {
+    try {
+      const result = await runAwakeCycle();
+      res.json({ success: true, ...result });
+    } catch (err) {
+      throw new HttpError(500, "Failed to run awake cycle", { cause: err });
+    }
+  })
+);
 
 // --- Messages (replies in a thread; any agent can post) ---
-app.get("/threads/:id/messages", async (req, res) => {
-  try {
-    const threadId = req.params.id?.trim();
+app.get(
+  "/threads/:id/messages",
+  asyncHandler(async (req, res) => {
+    try {
+    const threadId = routeParam(req, "id");
     if (!threadId) {
       res.status(400).json({ error: "Invalid thread id" });
       return;
@@ -667,14 +707,14 @@ app.get("/threads/:id/messages", async (req, res) => {
       };
     });
     res.json(normalized);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch messages" });
-  }
-});
+    } catch (err) {
+      throw new HttpError(500, "Failed to fetch messages", { cause: err });
+    }
+  })
+);
 
 app.get("/threads/:id/stream", async (req, res) => {
-  const threadId = req.params.id?.trim();
+  const threadId = routeParam(req, "id");
   if (!threadId) {
     res.status(400).json({ error: "Invalid thread id" });
     return;
@@ -707,9 +747,11 @@ app.get("/threads/:id/stream", async (req, res) => {
   });
 });
 
-app.post("/threads/:id/messages", async (req, res) => {
-  try {
-    const threadId = req.params.id?.trim();
+app.post(
+  "/threads/:id/messages",
+  asyncHandler(async (req, res) => {
+    try {
+    const threadId = routeParam(req, "id");
     const { agentId, content, actorType, actorName } = req.body;
     let normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
     let normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
@@ -784,16 +826,18 @@ app.post("/threads/:id/messages", async (req, res) => {
       actorType: normalizedActorType,
       agentId: normalizedActorType === "agent" ? normalizedAgentId : null,
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to post message" });
-  }
-});
+    } catch (err) {
+      throw new HttpError(500, "Failed to post message", { cause: err });
+    }
+  })
+);
 
 // --- User messages (strict Board-of-Directors identity for auditability) ---
-app.post("/threads/:id/messages/board", async (req, res) => {
-  try {
-    const threadId = req.params.id?.trim();
+app.post(
+  "/threads/:id/messages/board",
+  asyncHandler(async (req, res) => {
+    try {
+    const threadId = routeParam(req, "id");
     const { content, agentId, actorType, actorName } = req.body ?? {};
     if (!threadId || content == null) {
       res.status(400).json({ error: "thread id and content required" });
@@ -841,14 +885,53 @@ app.post("/threads/:id/messages/board", async (req, res) => {
       actorType: "board",
       agentId: null,
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to post board message" });
+    } catch (err) {
+      throw new HttpError(500, "Failed to post board message", { cause: err });
+    }
+  })
+);
+
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
   }
+  const logErr = err instanceof Error ? err : new Error(String(err));
+  console.error(logErr);
+
+  const status = err instanceof HttpError ? err.statusCode : 500;
+  const body =
+    err instanceof HttpError ? { error: err.clientMessage } : { error: "Internal server error" };
+
+  if (status >= 500) {
+    reportErrorToHealer({
+      err,
+      req: { method: req.method, path: req.path },
+      kind: "http",
+    });
+  }
+
+  res.status(status).json(body);
 });
 
 syncAgentConfigPointers()
   .then(() => {
+    process.on("unhandledRejection", (reason) => {
+      console.error("Unhandled rejection:", reason);
+      reportErrorToHealer({
+        err: reason instanceof Error ? reason : new Error(String(reason)),
+        kind: "unhandledRejection",
+      });
+    });
+    process.on("uncaughtException", (error) => {
+      console.error("Uncaught exception:", error);
+      reportErrorToHealer({
+        err: error,
+        kind: "uncaughtException",
+      });
+      process.exit(1);
+    });
+
     const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
     const pollMs = Number.isFinite(pollMsRaw) ? Math.max(5000, Math.floor(pollMsRaw)) : 30000;
     startAwakeScheduler(pollMs);
