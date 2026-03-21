@@ -98,6 +98,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
 /**
  * Map provider + task to CLI command and args.
  * --workspace <cwd>: agent runs in their own dir (so MCP/skills load from there).
+ * --model auto: Cursor agent model selection.
  * When canReadOutsideWorkspace (e.g. CEO reviewing Engineer): add --sandbox disabled so the agent
  * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' dirs (e.g. /path/to/engineer/project_1/artifacts).
  */
@@ -109,7 +110,7 @@ function getCliInvocation(
 ): { command: string; args: string[] } {
   switch (provider) {
     case "cursor": {
-      const args = ["--print", "--trust", "-f", "--workspace", cwd];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", "auto"];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
@@ -119,7 +120,7 @@ function getCliInvocation(
     case "claude-code":
       return { command: "claude-code", args: [task] };
     default: {
-      const args = ["--print", "--trust", "-f", "--workspace", cwd];
+      const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", "auto"];
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
