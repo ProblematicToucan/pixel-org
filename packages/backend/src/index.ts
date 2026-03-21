@@ -24,7 +24,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
 
 const app = express();
@@ -395,11 +395,21 @@ app.patch("/projects/:id", async (req, res) => {
 app.get("/projects/:id/threads", async (req, res) => {
   try {
     const projectId = req.params.id?.trim();
+    const statusFilter = req.query.status as string | undefined;
     if (!projectId) {
       res.status(400).json({ error: "Invalid project id" });
       return;
     }
-    const rows = await db.select().from(threads).where(eq(threads.projectId, projectId));
+    const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
+    let rows;
+    if (statusFilter && validStatuses.includes(statusFilter as typeof validStatuses[number])) {
+      rows = await db
+        .select()
+        .from(threads)
+        .where(and(eq(threads.projectId, projectId), eq(threads.status, statusFilter as typeof validStatuses[number])));
+    } else {
+      rows = await db.select().from(threads).where(eq(threads.projectId, projectId));
+    }
     res.json(rows);
   } catch (err) {
     console.error(err);
@@ -410,10 +420,11 @@ app.get("/projects/:id/threads", async (req, res) => {
 app.post("/projects/:id/threads", async (req, res) => {
   try {
     const projectId = req.params.id?.trim();
-    const { agentId, title, requesterAgentId } = req.body as {
+    const { agentId, title, requesterAgentId, status } = req.body as {
       agentId?: string;
       title?: string | null;
       requesterAgentId?: string | null;
+      status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
     };
     if (!projectId || agentId == null) {
       res.status(400).json({ error: "project id and agentId required" });
@@ -442,12 +453,18 @@ app.post("/projects/:id/threads", async (req, res) => {
         return;
       }
     }
+    const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
+    const threadStatus =
+      status && validStatuses.includes(status as typeof validStatuses[number])
+        ? (status as typeof validStatuses[number])
+        : "not_started";
     const threadId = randomUUID();
     await db.insert(threads).values({
       id: threadId,
       projectId,
       agentId: ownerId,
       title: title != null ? String(title).trim() : null,
+      status: threadStatus,
     });
     await enqueueKickoffLeadRun({
       projectId,
@@ -460,10 +477,89 @@ app.post("/projects/:id/threads", async (req, res) => {
       id: threadId,
       projectId,
       agentId: ownerId,
+      status: threadStatus,
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create thread" });
+  }
+});
+
+app.patch("/threads/:id/status", async (req, res) => {
+  try {
+    const threadId = req.params.id?.trim();
+    const { status, requesterAgentId, actorType } = req.body as {
+      status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled";
+      requesterAgentId?: string | null;
+      actorType?: "agent" | "board";
+    };
+    if (!threadId) {
+      res.status(400).json({ error: "Invalid thread id" });
+      return;
+    }
+    const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
+    if (!status || !validStatuses.includes(status as typeof validStatuses[number])) {
+      res.status(400).json({ error: "status is required and must be one of: not_started, in_progress, completed, blocked, cancelled" });
+      return;
+    }
+    const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
+    if (!thread) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
+    const isBoard = actorType === "board";
+    const requesterRaw =
+      requesterAgentId === undefined || requesterAgentId === null ? "" : String(requesterAgentId).trim();
+    if (!isBoard && !requesterRaw) {
+      res.status(400).json({ error: "requesterAgentId is required when actorType is not 'board'" });
+      return;
+    }
+    if (!isBoard) {
+      const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterRaw)).limit(1);
+      if (!requesterRow) {
+        res.status(400).json({ error: "requesterAgentId not found" });
+        return;
+      }
+      if (requesterRow.id !== thread.agentId) {
+        res.status(403).json({ error: "Only thread owner or Board of Directors can change thread status" });
+        return;
+      }
+    }
+    const oldStatus = thread.status;
+    if (oldStatus === status) {
+      res.json({ success: true, status, message: "Status unchanged" });
+      return;
+    }
+    await db.update(threads).set({ status }).where(eq(threads.id, threadId));
+    const statusChangeMessage = `Thread status changed: ${oldStatus} → ${status}`;
+    const actorName = isBoard ? "Board of Directors" : null;
+    const requesterName = isBoard
+      ? null
+      : (await db.select().from(agents).where(eq(agents.id, requesterRaw)).limit(1))[0]?.name ?? null;
+    const messageId = randomUUID();
+    const createdAt = new Date();
+    await db.insert(messages).values({
+      id: messageId,
+      threadId,
+      agentId: isBoard ? null : requesterRaw,
+      actorType: isBoard ? "board" : "agent",
+      actorName: isBoard ? actorName : requesterName,
+      content: statusChangeMessage,
+      createdAt,
+    });
+    emitThreadMessage(threadId, {
+      id: messageId,
+      threadId,
+      agentId: isBoard ? null : requesterRaw,
+      actorType: isBoard ? "board" : "agent",
+      actorName: isBoard ? actorName : requesterName,
+      content: statusChangeMessage,
+      createdAt: createdAt.toISOString(),
+    });
+    res.json({ success: true, status });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update thread status" });
   }
 });
 

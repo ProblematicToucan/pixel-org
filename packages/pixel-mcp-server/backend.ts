@@ -134,24 +134,45 @@ export async function createProject(name: string): Promise<{ success: boolean; s
   return post("/projects", { name });
 }
 
-export async function listThreads(projectId: string): Promise<
-  { id: string; projectId: string; agentId: string; title: string | null }[]
+export async function listThreads(
+  projectId: string,
+  options?: { status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null }
+): Promise<
+  { id: string; projectId: string; agentId: string; title: string | null; status: string }[]
 > {
-  return get(`/projects/${encodeURIComponent(projectId)}/threads`);
+  const url = options?.status
+    ? `/projects/${encodeURIComponent(projectId)}/threads?status=${encodeURIComponent(options.status)}`
+    : `/projects/${encodeURIComponent(projectId)}/threads`;
+  return get(url);
 }
 
 export async function createThread(
   projectId: string,
   title?: string,
-  options?: { ownerAgentId?: string | null }
-): Promise<{ success: boolean; id?: string; projectId: string; agentId: string }> {
+  options?: {
+    ownerAgentId?: string | null;
+    status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
+  }
+): Promise<{ success: boolean; id?: string; projectId: string; agentId: string; status?: string }> {
   const requester = agentId();
   const owner = options?.ownerAgentId?.trim() || requester;
   return post(`/projects/${encodeURIComponent(projectId)}/threads`, {
     agentId: owner,
     title: title ?? null,
+    status: options?.status ?? null,
     /** When set, backend enforces: self, or lead assigning to an agent in their reporting line. */
     requesterAgentId: requester,
+  });
+}
+
+export async function setThreadStatus(
+  threadId: string,
+  status: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled"
+): Promise<{ success: boolean; status: string }> {
+  return patch(`/threads/${encodeURIComponent(threadId)}/status`, {
+    status,
+    requesterAgentId: agentId(),
+    actorType: "agent",
   });
 }
 

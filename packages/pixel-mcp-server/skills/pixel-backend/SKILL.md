@@ -23,8 +23,9 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_list_projects` | List projects (channels). |
 | `pixel_get_project_goals` | Get goals for a project (user-defined objectives). |
 | `pixel_set_project_goals` | Set or update project goals. |
-| `pixel_list_threads` | List threads in a project. |
-| `pixel_create_thread` | Create a thread (e.g. start work on a task). Default owner = current agent. Optional `ownerAgentId` assigns another agent (self, or as a lead: a report in your line). |
+| `pixel_list_threads` | List threads in a project. Optional `status` filter: not_started, in_progress, completed, blocked, cancelled. |
+| `pixel_create_thread` | Create a thread (e.g. start work on a task). Default owner = current agent. Optional `ownerAgentId` assigns another agent (self, or as a lead: a report in your line). Optional `status` sets initial status (default: not_started). |
+| `pixel_set_thread_status` | Set thread status (not_started, in_progress, completed, blocked, cancelled). Only thread owner or Board of Directors can change status. Posts informational message on change. |
 | `pixel_list_messages` | List messages in a thread (tickets, comments). |
 | `pixel_post_message` | Post a message (record progress, reply, feedback). |
 | `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |
@@ -53,16 +54,20 @@ This keeps every run tied to a thread and messages so the user can audit what wa
 
 ## Read user input (tickets, comments, goals)
 
+- **Threads** = work items (like GitHub issues). Each thread has a status: `not_started`, `in_progress`, `completed`, `blocked`, or `cancelled`. Use `pixel_list_threads` with `status` filter to find work that needs attention (e.g., `status: "not_started"` or `status: "in_progress"`).
 - **Messages in a thread** = user requests, tickets, or comments. List threads for the project, then list messages for each thread; treat new or relevant messages as work to do or feedback to address.
 - **Project goals** = user-defined objectives. Call `pixel_get_project_goals` for the project you're working on and align your work with those goals. If the user sets goals via the app, use `pixel_set_project_goals` only when explicitly asked to update them.
+- **Thread status** = overall state of a work item. When you finish all work in a thread, set status to `completed` using `pixel_set_thread_status`. If blocked, set to `blocked`. Status changes post informational messages so agents know when threads are reopened or updated.
 
 ## Autonomous runs (e.g. while user is away)
 
 When run autonomously (e.g. scheduled):
 
 1. Call `pixel_list_projects` (and optionally `pixel_get_project_goals` for each).
-2. For your project(s), call `pixel_list_threads` and `pixel_list_messages` to see new requests or comments.
-3. Create a thread or use an existing one; post "Started: …", do the work, then post "Completed: …" or "Blocked: …".
+2. For your project(s), call `pixel_list_threads` with `status: "not_started"` or `status: "in_progress"` to find work that needs attention.
+3. For each relevant thread, call `pixel_list_messages` to see new requests or comments.
+4. Create a thread or use an existing one; post "Started: …", do the work, then post "Completed: …" or "Blocked: …".
+5. When all work in a thread is done, set thread status to `completed` using `pixel_set_thread_status`.
 
 Same tools; no direct API calls. Everything stays recorded and auditable.
 

@@ -51,11 +51,20 @@ export interface Project {
   createdAt: string;
 }
 
+export type ThreadStatus =
+  | "not_started"
+  | "in_progress"
+  | "completed"
+  | "blocked"
+  | "cancelled";
+
 export interface Thread {
   id: string;
   projectId: string;
   agentId: string;
   title: string | null;
+  /** Work item status; omit on older API responses until migrated */
+  status?: ThreadStatus;
   createdAt: string;
 }
 
@@ -151,15 +160,31 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  getProjectThreads: (projectId: string) =>
-    fetchApi<Thread[]>("/projects/" + encodeURIComponent(projectId) + "/threads"),
+  getProjectThreads: (projectId: string, params?: { status?: ThreadStatus }) => {
+    const q = params?.status ? "?status=" + encodeURIComponent(params.status) : "";
+    return fetchApi<Thread[]>("/projects/" + encodeURIComponent(projectId) + "/threads" + q);
+  },
   createThread: (
     projectId: string,
-    body: { agentId: string; title?: string }
+    body: { agentId: string; title?: string; status?: ThreadStatus }
   ) =>
-    fetchApi<{ success: boolean; id: string; projectId: string; agentId: string }>(
-      "/projects/" + encodeURIComponent(projectId) + "/threads",
-      { method: "POST", body: JSON.stringify(body) }
+    fetchApi<{
+      success: boolean;
+      id: string;
+      projectId: string;
+      agentId: string;
+      status?: ThreadStatus;
+    }>("/projects/" + encodeURIComponent(projectId) + "/threads", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  patchThreadStatusAsBoard: (threadId: string, status: ThreadStatus) =>
+    fetchApi<{ success: boolean; status: string; message?: string }>(
+      "/threads/" + encodeURIComponent(threadId) + "/status",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status, actorType: "board" }),
+      }
     ),
 
   getThreadMessages: (threadId: string) =>

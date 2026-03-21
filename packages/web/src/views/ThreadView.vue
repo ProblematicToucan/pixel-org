@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
-import { API_BASE, api, type Message, type Thread, type Agent } from "../api";
+import { API_BASE, api, type Message, type Thread, type Agent, type ThreadStatus } from "../api";
+import {
+  THREAD_STATUS_OPTIONS,
+  formatThreadStatus,
+  normalizeThreadStatus,
+} from "../threadStatus";
 
 const route = useRoute();
 const threadId = computed(() => route.params.id as string);
@@ -16,6 +21,7 @@ const newContent = ref("");
 let fallbackPollTimer: number | null = null;
 let stream: EventSource | null = null;
 const selectedRunEventIds = ref<Record<string, string>>({});
+const statusPatching = ref(false);
 
 /** Parent project detail, or project list while thread is still loading. */
 const backToProjectPath = computed(() =>
@@ -90,6 +96,22 @@ async function postMessage() {
     error.value = e instanceof Error ? e.message : "Failed to post";
   } finally {
     posting.value = false;
+  }
+}
+
+async function updateThreadStatus(next: ThreadStatus) {
+  if (!threadId.value || !thread.value) return;
+  const prev = normalizeThreadStatus(thread.value.status);
+  if (prev === next) return;
+  statusPatching.value = true;
+  error.value = null;
+  try {
+    await api.patchThreadStatusAsBoard(threadId.value, next);
+    await loadThreadAndMessages();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to update thread status";
+  } finally {
+    statusPatching.value = false;
   }
 }
 
@@ -363,6 +385,31 @@ onUnmounted(() => {
       <h1>{{ thread ? (thread.title || "Thread") : "Thread" }}</h1>
       <p v-if="thread" class="meta">Owner: {{ agentName(thread.agentId) }}</p>
 
+      <section v-if="thread" class="thread-status-board" aria-label="Thread status (Board)">
+        <span
+          class="status-badge"
+          :class="'status-' + normalizeThreadStatus(thread.status)"
+          >{{ formatThreadStatus(thread.status) }}</span
+        >
+        <label class="status-board-control">
+          <span class="status-board-label">Set status</span>
+          <select
+            class="input status-select"
+            :value="normalizeThreadStatus(thread.status)"
+            :disabled="statusPatching"
+            title="Board of Directors — thread work item status"
+            @change="
+              updateThreadStatus(($event.target as HTMLSelectElement).value as ThreadStatus)
+            "
+          >
+            <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+        </label>
+        <p class="status-board-hint">Thread status is the overall work item (like a GitHub issue), separate from agent run messages.</p>
+      </section>
+
       <section class="messages">
         <ul class="message-list">
           <li v-for="item in timelineItems" :key="item.key" class="message-item">
@@ -456,6 +503,70 @@ h1 {
   color: var(--muted);
   font-size: 0.9rem;
   margin: 0 0 1rem;
+}
+.thread-status-board {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.status-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status-badge.status-not_started {
+  border-color: var(--muted);
+}
+.status-badge.status-in_progress {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.status-badge.status-completed {
+  border-color: #2e7d32;
+  color: #2e7d32;
+}
+.status-badge.status-blocked {
+  border-color: var(--error);
+  color: var(--error);
+}
+.status-badge.status-cancelled {
+  opacity: 0.85;
+}
+.status-board-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.status-board-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.thread-status-board .status-select {
+  min-width: 12rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.status-board-hint {
+  width: 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex-basis: 100%;
 }
 .messages {
   margin-bottom: 1.5rem;

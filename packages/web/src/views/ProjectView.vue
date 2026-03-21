@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
-import { api, type Project, type Thread, type Agent } from "../api";
+import { api, type Project, type Agent, type ThreadStatus } from "../api";
+import {
+  THREAD_STATUS_OPTIONS,
+  formatThreadStatus,
+  normalizeThreadStatus,
+} from "../threadStatus";
 
 const route = useRoute();
 const projectId = computed(() => route.params.id as string);
@@ -17,6 +22,9 @@ const newAgentId = ref("");
 const goalsDraft = ref("");
 const goalsSaving = ref(false);
 const goalsNotice = ref<string | null>(null);
+const statusFilter = ref<"" | ThreadStatus>("");
+const newThreadStatus = ref<ThreadStatus>("not_started");
+const statusUpdating = ref<Record<string, boolean>>({});
 
 function getBoardAgentId() {
   const lead = agents.value.find((agent) => agent.isLead);
@@ -48,11 +56,14 @@ async function load() {
   loading.value = true;
   error.value = null;
   try {
-    const [p, t, a] = await Promise.all([
+    const [p, a] = await Promise.all([
       api.getProject(projectId.value),
-      api.getProjectThreads(projectId.value),
       api.getAgents(),
     ]);
+    const t = await api.getProjectThreads(
+      projectId.value,
+      statusFilter.value === "" ? undefined : { status: statusFilter.value }
+    );
     project.value = p;
     threads.value = t;
     agents.value = a;
@@ -85,7 +96,10 @@ async function saveGoals() {
     if (shouldCreateKickoff) {
       kickoffCreated = await maybeCreateBoardKickoff(nextGoals);
       if (kickoffCreated) {
-        threads.value = await api.getProjectThreads(projectId.value);
+        threads.value = await api.getProjectThreads(
+          projectId.value,
+          statusFilter.value === "" ? undefined : { status: statusFilter.value }
+        );
       }
     }
     goalsNotice.value = kickoffCreated
@@ -111,6 +125,7 @@ async function createThread() {
     await api.createThread(projectId.value, {
       agentId: newAgentId.value,
       title: newTitle.value.trim() || undefined,
+      status: newThreadStatus.value,
     });
     newTitle.value = "";
     await load();
@@ -123,6 +138,22 @@ async function createThread() {
 
 function agentName(id: string) {
   return agents.value.find((a) => a.id === id)?.name ?? id;
+}
+
+async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
+  const current = threads.value.find((t) => t.id === threadId);
+  const prev = current ? normalizeThreadStatus(current.status) : null;
+  if (prev === next) return;
+  statusUpdating.value = { ...statusUpdating.value, [threadId]: true };
+  error.value = null;
+  try {
+    await api.patchThreadStatusAsBoard(threadId, next);
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to update thread status";
+  } finally {
+    statusUpdating.value = { ...statusUpdating.value, [threadId]: false };
+  }
 }
 
 onMounted(load);
@@ -172,11 +203,17 @@ onMounted(load);
 
       <section class="create-thread">
         <h2>New thread</h2>
+        <p class="meta board-hint">Thread status is the work item state (like a GitHub issue). Board can change it anytime below.</p>
         <div class="form">
           <select v-model="newAgentId" class="input">
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }} ({{ a.role }})</option>
           </select>
           <input v-model="newTitle" type="text" placeholder="Title (optional)" class="input" />
+          <select v-model="newThreadStatus" class="input" title="Initial status">
+            <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
           <button type="button" class="btn" :disabled="creating" @click="createThread">
             {{ creating ? "Creating…" : "Create thread" }}
           </button>
@@ -184,13 +221,47 @@ onMounted(load);
       </section>
 
       <section class="threads">
-        <h2>Threads</h2>
+        <div class="threads-header">
+          <h2>Threads</h2>
+          <label class="filter-label">
+            <span class="filter-text">Filter by status</span>
+            <select v-model="statusFilter" class="input filter-select" @change="load">
+              <option value="">All statuses</option>
+              <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </label>
+        </div>
         <ul class="thread-list">
           <li v-for="t in threads" :key="t.id" class="thread-item">
-            <router-link :to="'/threads/' + t.id" class="thread-link">
-              <span class="title">{{ t.title || "Untitled" }}</span>
-              <span class="meta">by {{ agentName(t.agentId) }} · {{ new Date(t.createdAt).toLocaleString() }}</span>
-            </router-link>
+            <div class="thread-row">
+              <router-link :to="'/threads/' + t.id" class="thread-link">
+                <span class="title">{{ t.title || "Untitled" }}</span>
+                <span class="meta">by {{ agentName(t.agentId) }} · {{ new Date(t.createdAt).toLocaleString() }}</span>
+              </router-link>
+              <div class="thread-board-status" @click.stop>
+                <span class="status-badge" :class="'status-' + normalizeThreadStatus(t.status)">{{
+                  formatThreadStatus(t.status)
+                }}</span>
+                <select
+                  class="input status-select"
+                  :value="normalizeThreadStatus(t.status)"
+                  :disabled="statusUpdating[t.id]"
+                  title="Set thread status (Board)"
+                  @change="
+                    onThreadStatusChange(
+                      t.id,
+                      ($event.target as HTMLSelectElement).value as ThreadStatus
+                    )
+                  "
+                >
+                  <option v-for="opt in THREAD_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+            </div>
           </li>
         </ul>
         <p v-if="!threads.length" class="empty">No threads yet. Create one above.</p>
@@ -253,12 +324,89 @@ h1 {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.board-hint {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
 .create-thread, .threads {
   margin-top: 1.5rem;
 }
 .create-thread h2, .threads h2 {
   font-size: 1rem;
   margin: 0 0 0.5rem;
+}
+.threads-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.threads-header h2 {
+  margin: 0;
+}
+.filter-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.filter-text {
+  white-space: nowrap;
+}
+.filter-select {
+  min-width: 10rem;
+}
+.thread-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+.thread-link {
+  flex: 1;
+  min-width: 12rem;
+}
+.thread-board-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.status-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status-badge.status-not_started {
+  border-color: var(--muted);
+}
+.status-badge.status-in_progress {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.status-badge.status-completed {
+  border-color: #2e7d32;
+  color: #2e7d32;
+}
+.status-badge.status-blocked {
+  border-color: var(--error);
+  color: var(--error);
+}
+.status-badge.status-cancelled {
+  opacity: 0.85;
+}
+.status-select {
+  min-width: 10rem;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
 }
 .form {
   display: flex;
@@ -312,7 +460,7 @@ select.input {
   color: inherit;
   transition: border-color 0.15s;
 }
-.thread-link:hover {
+.thread-item .thread-link:hover {
   border-color: var(--accent);
 }
 .thread-link .title {

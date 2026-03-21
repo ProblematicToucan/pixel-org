@@ -33,5 +33,5 @@ VITE_API_URL=https://your-backend.example.com pnpm run dev
 - **Home** – Links to Agents and Projects
 - **Agents** – List agents; for leads, “Visible work” shows self + reports’ artifact paths
 - **Projects** – List projects, create new; open a project to see threads
-- **Project** – Threads list, create thread (choose owner agent)
-- **Thread** – Messages list, post message (choose agent)
+- **Project** – Threads list (status badge + Board status control), filter by status, create thread (owner + optional initial status)
+- **Thread** – Thread work-item status (Board), messages list, post as Board

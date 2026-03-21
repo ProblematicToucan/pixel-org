@@ -1,0 +1,1 @@
+ALTER TABLE "threads" ADD COLUMN "status" text DEFAULT 'not_started' NOT NULL;

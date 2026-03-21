@@ -213,12 +213,16 @@ export function createServer(): McpServer {
   server.registerTool(
     "pixel_list_threads",
     {
-      description: "List threads in a project.",
+      description: "List threads in a project. Optional status filter: not_started, in_progress, completed, blocked, cancelled.",
       inputSchema: z.object({
         projectId: z.string().describe("Project UUID"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "blocked", "cancelled"])
+          .optional()
+          .describe("Optional status filter"),
       }),
     },
-    async (args: { projectId?: string }): Promise<CallToolResult> => {
+    async (args: { projectId?: string; status?: string }): Promise<CallToolResult> => {
       const projectId = args?.projectId ?? "";
       if (!projectId) {
         return {
@@ -227,7 +231,9 @@ export function createServer(): McpServer {
         };
       }
       try {
-        const list = await backend.listThreads(projectId);
+        const list = await backend.listThreads(projectId, {
+          status: args?.status as "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null | undefined,
+        });
         const text = JSON.stringify(list, null, 2);
         return { content: [{ type: "text", text }] };
       } catch (err) {
@@ -241,7 +247,7 @@ export function createServer(): McpServer {
     "pixel_create_thread",
     {
       description:
-        "Create a thread in a project (e.g. start work on a task). Default owner is the current agent (PIXEL_AGENT_ID). Optional ownerAgentId assigns another agent as thread owner: allowed for self, or for leads assigning to an agent in their reporting line (descendants).",
+        "Create a thread in a project (e.g. start work on a task). Default owner is the current agent (PIXEL_AGENT_ID). Optional ownerAgentId assigns another agent as thread owner: allowed for self, or for leads assigning to an agent in their reporting line (descendants). Optional status sets initial status (default: not_started).",
       inputSchema: z.object({
         projectId: z.string().describe("Project UUID"),
         title: z.string().optional().describe("Optional thread title"),
@@ -251,9 +257,18 @@ export function createServer(): McpServer {
           .describe(
             "Optional thread owner (assignee). Omit to own the thread yourself. Leads may set this to a report's agent id."
           ),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "blocked", "cancelled"])
+          .optional()
+          .describe("Optional initial thread status (default: not_started)"),
       }),
     },
-    async (args: { projectId?: string; title?: string; ownerAgentId?: string }): Promise<CallToolResult> => {
+    async (args: {
+      projectId?: string;
+      title?: string;
+      ownerAgentId?: string;
+      status?: string;
+    }): Promise<CallToolResult> => {
       const projectId = args?.projectId ?? "";
       if (!projectId) {
         return {
@@ -264,17 +279,71 @@ export function createServer(): McpServer {
       try {
         const result = await backend.createThread(projectId, args?.title, {
           ownerAgentId: args?.ownerAgentId,
+          status: args?.status as
+            | "not_started"
+            | "in_progress"
+            | "completed"
+            | "blocked"
+            | "cancelled"
+            | null
+            | undefined,
         });
         const idPart = result.id ? ` id=${result.id}` : "";
         const ownerPart =
           result.agentId && result.agentId !== backend.getCurrentAgentId()
             ? ` owner=${result.agentId}`
             : "";
+        const statusPart = result.status ? ` status=${result.status}` : "";
         return {
           content: [
             {
               type: "text",
-              text: `Created thread in project ${projectId}${idPart}${ownerPart}${args?.title ? ` title="${args.title}"` : ""}`,
+              text: `Created thread in project ${projectId}${idPart}${ownerPart}${statusPart}${args?.title ? ` title="${args.title}"` : ""}`,
+            },
+          ],
+          structuredContent: result,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_set_thread_status",
+    {
+      description:
+        "Set thread status (not_started, in_progress, completed, blocked, cancelled). Only thread owner or Board of Directors can change status. Posts an informational message when status changes.",
+      inputSchema: z.object({
+        threadId: z.string().describe("Thread UUID"),
+        status: z
+          .enum(["not_started", "in_progress", "completed", "blocked", "cancelled"])
+          .describe("New thread status"),
+      }),
+    },
+    async (args: { threadId?: string; status?: string }): Promise<CallToolResult> => {
+      const threadId = args?.threadId ?? "";
+      const status = args?.status as "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | undefined;
+      if (!threadId) {
+        return {
+          content: [{ type: "text", text: "Error: threadId is required" }],
+          isError: true,
+        };
+      }
+      if (!status) {
+        return {
+          content: [{ type: "text", text: "Error: status is required" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await backend.setThreadStatus(threadId, status);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Thread ${threadId} status set to ${result.status}. An informational message was posted.`,
             },
           ],
           structuredContent: result,
