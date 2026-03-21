@@ -123,8 +123,8 @@ app.get("/agents/:id", async (req, res) => {
 });
 
 /**
- * Lead-only hiring endpoint.
- * Creates a new child agent where parentId = requester (lead) unless overridden.
+ * Hiring endpoint: only the single organization lead may hire.
+ * New agents are always non-leads (parentId = requester unless overridden; still must be requester).
  */
 app.post("/agents/hire", async (req, res) => {
   try {
@@ -150,8 +150,20 @@ app.post("/agents/hire", async (req, res) => {
       res.status(404).json({ error: "Requester agent not found" });
       return;
     }
-    if (!requester.isLead) {
-      res.status(403).json({ error: "Only lead agents can hire new agents" });
+
+    // Exactly one org lead; only that agent may hire. Prevents non-leads from hiring and avoids
+    // ambiguous behavior if multiple rows have is_lead=true (a lead cannot hire "another lead").
+    const leadRows = await db.select({ id: agents.id }).from(agents).where(eq(agents.isLead, true));
+    if (leadRows.length === 0) {
+      res.status(409).json({ error: "No organization lead is configured; cannot hire." });
+      return;
+    }
+    if (leadRows.length > 1) {
+      res.status(409).json({ error: "Multiple leads exist; resolve duplicates before hiring." });
+      return;
+    }
+    if (leadRows[0].id !== requesterId) {
+      res.status(403).json({ error: "Only the organization lead can hire new agents." });
       return;
     }
 
@@ -167,7 +179,12 @@ app.post("/agents/hire", async (req, res) => {
       config === undefined || config === null || String(config).trim() === ""
         ? null
         : String(config).trim();
-    const hireAsLead = isLead === true;
+    if (isLead === true) {
+      res.status(400).json({
+        error: "Hired agents cannot be leads. Only one lead is allowed per organization.",
+      });
+      return;
+    }
     const normalizedParentId =
       parentId === undefined || parentId === null || String(parentId).trim() === ""
         ? requester.id
@@ -184,7 +201,7 @@ app.post("/agents/hire", async (req, res) => {
       name: cleanName,
       type: cleanType,
       role: cleanRole,
-      isLead: hireAsLead,
+      isLead: false,
       parentId: normalizedParentId,
       config: cleanConfig,
     });

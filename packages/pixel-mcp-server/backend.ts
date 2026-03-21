@@ -99,7 +99,6 @@ export async function hireAgent(input: {
   name: string;
   role: string;
   type?: string;
-  isLead?: boolean;
   config?: string | null;
   agentsMd?: string | null;
 }): Promise<{ success: boolean; hiredBy: string; agent: AgentRow & { configDisplay?: string | null } }> {
@@ -108,7 +107,6 @@ export async function hireAgent(input: {
     name: input.name,
     role: input.role,
     type: input.type ?? "cursor",
-    isLead: input.isLead === true,
     config: input.config ?? null,
     agentsMd: input.agentsMd ?? null,
   });

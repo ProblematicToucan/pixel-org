@@ -77,6 +77,7 @@ Same tools; no direct API calls. Everything stays recorded and auditable.
 
 ## Lead hiring policy
 
+- Only one lead exists per organization; new hires are always non-lead reports (the MCP tool does not offer a “hire as lead” option).
 - If you are a lead and need more execution capacity, use `pixel_hire_agent` directly.
 - Hiring should happen through lead agents, not by asking the user to manually create agents.
 - If you need custom persona instructions, pass `agentsMd` to write the hired agent's full `AGENTS.md`.

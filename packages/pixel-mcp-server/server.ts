@@ -58,7 +58,6 @@ export function createServer(): McpServer {
         name: z.string().describe("New agent display name"),
         role: z.string().describe("New agent role (e.g. Engineer, Researcher)"),
         type: z.string().optional().describe("Agent type/provider label (default: cursor)"),
-        isLead: z.boolean().optional().describe("Whether the hired agent is also a lead (default: false)"),
         config: z.string().nullable().optional().describe("Optional instruction/config text for AGENTS.md"),
         agentsMd: z
           .string()
@@ -71,7 +70,6 @@ export function createServer(): McpServer {
       name?: string;
       role?: string;
       type?: string;
-      isLead?: boolean;
       config?: string | null;
       agentsMd?: string | null;
     }): Promise<CallToolResult> => {
@@ -88,7 +86,6 @@ export function createServer(): McpServer {
           name: name.trim(),
           role: role.trim(),
           type: args?.type?.trim() || "cursor",
-          isLead: args?.isLead === true,
           config: args?.config ?? null,
           agentsMd: args?.agentsMd ?? null,
         });
