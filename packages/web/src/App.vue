@@ -4,29 +4,26 @@ import { RouterLink, RouterView } from "vue-router";
 import { api, type ActiveAgentRun } from "./api";
 
 const activeRuns = ref<ActiveAgentRun[]>([]);
-const loadingRuns = ref(false);
 const runsError = ref<string | null>(null);
 const panelOpen = ref(false);
 let pollTimer: number | null = null;
 
 const hasActiveRuns = computed(() => activeRuns.value.length > 0);
 const floatingLabel = computed(() => {
-  if (loadingRuns.value && !hasActiveRuns.value) return "Checking agents...";
-  return hasActiveRuns.value
-    ? `${activeRuns.value.length} agent run${activeRuns.value.length === 1 ? "" : "s"} active`
-    : "No active agent runs";
+  if (runsError.value) return "Failed to load agent runs";
+  if (hasActiveRuns.value) {
+    return `${activeRuns.value.length} agent run${activeRuns.value.length === 1 ? "" : "s"} active`;
+  }
+  return "No active agent runs";
 });
 
 async function refreshActiveRuns() {
-  loadingRuns.value = true;
   try {
     const runs = await api.getActiveRuns();
     activeRuns.value = runs;
     runsError.value = null;
   } catch (err) {
     runsError.value = err instanceof Error ? err.message : "Failed to fetch active runs";
-  } finally {
-    loadingRuns.value = false;
   }
 }
 
