@@ -42,6 +42,8 @@ export interface RunAgentOptions {
    * Should match the orchestration run record. Default `"auto"`.
    */
   model?: string;
+  /** When set, headless CLI resumes this session id (e.g. Cursor `agent --resume <id>`). */
+  resumeSessionId?: string;
   /** Extra env vars (e.g. PIXEL_AGENT_ROLE is set from role) */
   env?: Record<string, string>;
   /** Optional callback fired immediately after child process spawn. */

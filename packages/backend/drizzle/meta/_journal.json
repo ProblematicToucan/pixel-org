@@ -15,6 +15,20 @@
       "when": 1774054787995,
       "tag": "0001_normal_ma_gnuci",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774100000000,
+      "tag": "0002_threads_session_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774100000001,
+      "tag": "0003_threads_session_id_unique",
+      "breakpoints": true
     }
   ]
 }
