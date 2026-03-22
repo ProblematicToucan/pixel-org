@@ -1,6 +1,6 @@
 # Contributing to pixel-org
 
-This document explains how to work in this repository—whether you are a human contributor or an automated agent. For agent **workspace storage** layout (where MCP configs and artifacts live on disk), see [`agents/README.md`](agents/README.md).
+This document explains how to work in this repository—whether you are a human contributor or an automated agent. For agent **workspace storage** layout (where MCP configs and artifacts live on disk), see [Agent workspace storage](README.md#agent-workspace-storage) in the root README.
 
 ## What this repo is
 
@@ -90,7 +90,7 @@ cd packages/web && pnpm run dev
 2. **Match existing style** — TypeScript `module` resolution, imports, and patterns differ slightly per package; follow the nearest similar file.
 3. **Read before writing** — especially API routes in `packages/backend/src` and shared types consumed by `packages/web`.
 4. **Verify locally** — run `pnpm build` and relevant `pnpm dev` flows before considering work done; run backend migrations when the schema changes.
-5. **Agent workspace data** — default agent files live under `~/.pixel-org` (not in git). Override with `AGENTS_STORAGE_PATH` for local testing; details in [`agents/README.md`](agents/README.md).
+5. **Agent workspace data** — default agent files live under `~/.pixel-org` (not in git). Override with `AGENTS_STORAGE_PATH` for local testing; details in [Agent workspace storage](README.md#agent-workspace-storage).
 6. **Branches** — use a dedicated branch and a pull request; do not push straight to `main` (see [Git workflow](#git-workflow)).
 
 ## Where to look

@@ -33,6 +33,7 @@ import { reportErrorToHealer } from "./healerClient.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+const host = (process.env.HOST ?? "127.0.0.1").trim() || "127.0.0.1";
 
 /** Set when `app.listen` runs; closed on uncaughtException before healer grace period. */
 let httpServer: Server | undefined;
@@ -977,8 +978,11 @@ syncAgentConfigPointers()
     void runAwakeCycle().catch((err) => {
       console.error("Initial awake cycle failed:", err);
     });
-    httpServer = app.listen(port, () => {
-      console.log(`Backend listening on http://localhost:${port}`);
+    httpServer = app.listen(port, host, () => {
+      const connectHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
+      const bindNote =
+        host === "0.0.0.0" || host === "::" ? ` (bound to ${host}:${port})` : "";
+      console.log(`Backend listening on http://${connectHost}:${port}${bindNote}`);
     });
   })
   .catch(async (err) => {
