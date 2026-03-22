@@ -76,14 +76,17 @@ function buildOrchestrationAgentTask(params: {
     "You MUST post at least one message to this exact thread using pixel_post_message.",
     "Required first action: call pixel_post_message with 'Status: In Progress' and your immediate plan.",
     "Required final action: call pixel_post_message with either 'Status: Completed' or 'Status: Blocked'.",
-    "Read project goals and react in the kickoff thread with an actionable leadership response.",
+    params.reason === "kickoff_created"
+      ? "Read project goals and react in the kickoff thread with an actionable leadership response."
+      : "Use the project goals to prioritize work in this thread.",
     params.projectGoals ? `Project goals:\n${params.projectGoals}` : "Project goals are currently empty.",
   ].join("\n");
 }
 
 /**
- * Resolves `threads.session_id`: returns an existing non-empty id, or creates a session and
- * claims the row with `UPDATE ... WHERE session_id IS NULL` so concurrent workers do not overwrite.
+ * Resolves `threads.session_id`: returns an existing non-empty id, or claims the row with a
+ * placeholder UUID first, then calls `createCliSession` only for the winner so concurrent workers
+ * do not spawn duplicate CLI sessions.
  */
 async function ensureThreadSessionId(
   threadId: string,
@@ -91,20 +94,61 @@ async function ensureThreadSessionId(
   existing: string | null
 ): Promise<string> {
   if (existing != null && existing !== "") return existing;
-  const newId = await createCliSession({ cwd: agentDir });
+
+  const placeholder = randomUUID();
   const claimed = await db
     .update(threads)
-    .set({ sessionId: newId })
+    .set({ sessionId: placeholder })
     .where(and(eq(threads.id, threadId), isNull(threads.sessionId)))
     .returning();
-  if (claimed.length > 0) return newId;
-  const [row] = await db
-    .select({ sessionId: threads.sessionId })
-    .from(threads)
-    .where(eq(threads.id, threadId))
-    .limit(1);
-  if (row?.sessionId != null && row.sessionId !== "") return row.sessionId;
-  throw new Error("Failed to claim or read thread session_id");
+  if (claimed.length === 0) {
+    const [row] = await db
+      .select({ sessionId: threads.sessionId })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .limit(1);
+    if (row?.sessionId != null && row.sessionId !== "") return row.sessionId;
+    throw new Error("Failed to claim or read thread session_id");
+  }
+
+  try {
+    const realId = await createCliSession({ cwd: agentDir });
+    await db
+      .update(threads)
+      .set({ sessionId: realId })
+      .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
+    return realId;
+  } catch (err) {
+    await db
+      .update(threads)
+      .set({ sessionId: null })
+      .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
+    throw err;
+  }
+}
+
+/**
+ * When a resume run fails, only drop `threads.session_id` for likely session/CLI issues — not for
+ * transient Cursor API / network errors (502/503/504, etc.), so we do not destroy valid context.
+ */
+function shouldInvalidateStoredSessionOnFailure(
+  stderr: string | undefined | null,
+  _exitCode: number,
+  timedOut?: boolean
+): boolean {
+  if (timedOut) return false;
+  const raw = (stderr ?? "").trim().toLowerCase();
+  if (
+    raw.includes("504") ||
+    raw.includes("502") ||
+    raw.includes("503") ||
+    raw.includes("unavailable") ||
+    raw.includes("gateway timeout") ||
+    raw.includes("econnrefused")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -348,7 +392,11 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       });
 
       if (result.success) break;
-      if (attempt === 1 && hadStoredSessionId) {
+      if (
+        attempt === 1 &&
+        hadStoredSessionId &&
+        shouldInvalidateStoredSessionOnFailure(result.stderr, result.exitCode, result.timedOut)
+      ) {
         await db
           .update(threads)
           .set({ sessionId: null })
