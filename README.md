@@ -38,9 +38,9 @@ Override with **`AGENTS_STORAGE_PATH`** (e.g. to use a folder inside this repo f
 
 ### Layout
 
-```
+```text
 ~/.pixel-org/   # default; or $AGENTS_STORAGE_PATH
-├── 1-CEO/
+├── 1-ceo/
 │   ├── .cursor/
 │   │   ├── mcp.json          # MCP config for this agent (shared across projects)
 │   ├── .agents/
@@ -49,7 +49,7 @@ Override with **`AGENTS_STORAGE_PATH`** (e.g. to use a folder inside this repo f
 │   │   └── artifacts/        # project 1 outputs
 │   └── project_2/
 │       └── artifacts/        # project 2 outputs
-├── 2-CTO/
+├── 2-cto/
 │   ├── .cursor/
 │   │   ├── mcp.json
 │   ├── .agents/
