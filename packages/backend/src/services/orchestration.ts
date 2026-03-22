@@ -48,14 +48,14 @@ function buildOrchestrationAgentTask(params: {
           "Run protocol:",
           "- Call pixel_get_context first.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
+          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
           "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
         ]
       : [
           "Run protocol:",
           "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
+          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
           "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
         ];
 
@@ -74,8 +74,8 @@ function buildOrchestrationAgentTask(params: {
     `Model policy: ${params.model}.`,
     ...runProtocolLines,
     "You MUST post at least one message to this exact thread using pixel_post_message.",
-    "Required first action: call pixel_post_message with 'Status: In Progress' and your immediate plan.",
-    "Required final action: call pixel_post_message with either 'Status: Completed' or 'Status: Blocked'.",
+    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
+    "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
       : "Use the project goals to prioritize work in this thread.",
@@ -83,53 +83,119 @@ function buildOrchestrationAgentTask(params: {
   ].join("\n");
 }
 
+/** DB claim placeholder while provisioning a real CLI session (never pass to `--resume`). */
+const SESSION_PENDING_PREFIX = "pixel:pending:" as const;
+
+function isPendingSessionId(id: string | null | undefined): boolean {
+  return id != null && id.startsWith(SESSION_PENDING_PREFIX);
+}
+
 /**
- * Resolves `threads.session_id`: returns an existing non-empty id, or claims the row with a
- * placeholder UUID first, then calls `createCliSession` only for the winner so concurrent workers
- * do not spawn duplicate CLI sessions.
+ * Resolves `threads.session_id`: returns a real provider session id, using a prefixed pending claim
+ * so placeholders are never confused with resumable CLI ids.
  */
 async function ensureThreadSessionId(
   threadId: string,
   agentDir: string,
   existing: string | null
 ): Promise<string> {
-  if (existing != null && existing !== "") return existing;
+  const maxRounds = 8;
+  let current: string | null = existing;
 
-  const placeholder = randomUUID();
-  const claimed = await db
-    .update(threads)
-    .set({ sessionId: placeholder })
-    .where(and(eq(threads.id, threadId), isNull(threads.sessionId)))
-    .returning();
-  if (claimed.length === 0) {
+  for (let round = 0; round < maxRounds; round++) {
+    if (current != null && current !== "" && !isPendingSessionId(current)) {
+      return current;
+    }
+
+    if (current != null && isPendingSessionId(current)) {
+      try {
+        const realId = await createCliSession({ cwd: agentDir });
+        const updated = await db
+          .update(threads)
+          .set({ sessionId: realId })
+          .where(and(eq(threads.id, threadId), eq(threads.sessionId, current)))
+          .returning();
+        if (updated.length > 0) return realId;
+      } catch (err) {
+        await db
+          .update(threads)
+          .set({ sessionId: null })
+          .where(and(eq(threads.id, threadId), eq(threads.sessionId, current)));
+        throw err;
+      }
+      const [afterPending] = await db
+        .select({ sessionId: threads.sessionId })
+        .from(threads)
+        .where(eq(threads.id, threadId))
+        .limit(1);
+      current = afterPending?.sessionId ?? null;
+      continue;
+    }
+
+    const placeholder = `${SESSION_PENDING_PREFIX}${randomUUID()}`;
+    const claimed = await db
+      .update(threads)
+      .set({ sessionId: placeholder })
+      .where(and(eq(threads.id, threadId), isNull(threads.sessionId)))
+      .returning();
+    if (claimed.length > 0) {
+      try {
+        const realId = await createCliSession({ cwd: agentDir });
+        const swapped = await db
+          .update(threads)
+          .set({ sessionId: realId })
+          .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)))
+          .returning();
+        if (swapped.length > 0) return realId;
+      } catch (err) {
+        await db
+          .update(threads)
+          .set({ sessionId: null })
+          .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
+        throw err;
+      }
+      const [afterClaim] = await db
+        .select({ sessionId: threads.sessionId })
+        .from(threads)
+        .where(eq(threads.id, threadId))
+        .limit(1);
+      current = afterClaim?.sessionId ?? null;
+      continue;
+    }
+
     const [row] = await db
       .select({ sessionId: threads.sessionId })
       .from(threads)
       .where(eq(threads.id, threadId))
       .limit(1);
-    if (row?.sessionId != null && row.sessionId !== "") return row.sessionId;
-    throw new Error("Failed to claim or read thread session_id");
+    current = row?.sessionId ?? null;
+    if (current == null || current === "") {
+      throw new Error("Failed to claim or read thread session_id");
+    }
   }
 
-  try {
-    const realId = await createCliSession({ cwd: agentDir });
-    await db
-      .update(threads)
-      .set({ sessionId: realId })
-      .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
-    return realId;
-  } catch (err) {
-    await db
-      .update(threads)
-      .set({ sessionId: null })
-      .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
-    throw err;
-  }
+  throw new Error("Failed to resolve thread session_id after retries");
 }
 
+/** Substrings that indicate resume/session state is bad — only then clear `threads.session_id`. */
+const RESUME_SESSION_INVALIDATION_MARKERS = [
+  "cannot resume",
+  "session not found",
+  "invalid session",
+  "session corrupted",
+  "checkpoint",
+  "state mismatch",
+  "invalid session id",
+  "unknown session",
+  "chat not found",
+  "no such chat",
+  "expired session",
+  "failed to resume",
+] as const;
+
 /**
- * When a resume run fails, only drop `threads.session_id` for likely session/CLI issues — not for
- * transient Cursor API / network errors (502/503/504, etc.), so we do not destroy valid context.
+ * When a resume run fails, clear stored `session_id` only if stderr matches resume/session
+ * corruption signals (allowlist). Other failures keep the session so transient errors do not wipe context.
  */
 function shouldInvalidateStoredSessionOnFailure(
   stderr: string | undefined | null,
@@ -138,17 +204,10 @@ function shouldInvalidateStoredSessionOnFailure(
 ): boolean {
   if (timedOut) return false;
   const raw = (stderr ?? "").trim().toLowerCase();
-  if (
-    raw.includes("504") ||
-    raw.includes("502") ||
-    raw.includes("503") ||
-    raw.includes("unavailable") ||
-    raw.includes("gateway timeout") ||
-    raw.includes("econnrefused")
-  ) {
-    return false;
+  for (const m of RESUME_SESSION_INVALIDATION_MARKERS) {
+    if (raw.includes(m)) return true;
   }
-  return true;
+  return false;
 }
 
 /**
@@ -338,7 +397,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
 
   try {
     const agentDir = getAgentDir({ id: agent.id, role: agent.role });
-    const hadStoredSessionId = !!threadRow.sessionId;
+    const hadStoredSessionId =
+      !!threadRow.sessionId && !isPendingSessionId(threadRow.sessionId);
     let pendingExisting: string | null = threadRow.sessionId;
 
     let result!: RunAgentResult;
