@@ -979,7 +979,10 @@ syncAgentConfigPointers()
       console.error("Initial awake cycle failed:", err);
     });
     httpServer = app.listen(port, host, () => {
-      console.log(`Backend listening on http://${host}:${port}`);
+      const connectHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
+      const bindNote =
+        host === "0.0.0.0" || host === "::" ? ` (bound to ${host}:${port})` : "";
+      console.log(`Backend listening on http://${connectHost}:${port}${bindNote}`);
     });
   })
   .catch(async (err) => {
