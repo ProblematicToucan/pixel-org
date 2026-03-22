@@ -19,7 +19,8 @@ async function startStreamableHTTPServer(
   createMcpServer: () => McpServer
 ): Promise<void> {
   const port = parseInt(process.env.PORT ?? "3001", 10);
-  const app = createMcpExpressApp({ host: "0.0.0.0" });
+  const host = (process.env.HOST ?? "127.0.0.1").trim() || "127.0.0.1";
+  const app = createMcpExpressApp({ host });
   app.use(cors());
   app.use(express.json());
 
@@ -49,8 +50,8 @@ async function startStreamableHTTPServer(
     }
   });
 
-  const httpServer = app.listen(port, () => {
-    console.log(`Pixel MCP server (HTTP) at http://localhost:${port}/mcp`);
+  const httpServer = app.listen(port, host, () => {
+    console.log(`Pixel MCP server (HTTP) at http://${host}:${port}/mcp`);
   });
 
   const shutdown = () => {
