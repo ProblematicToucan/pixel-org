@@ -5,6 +5,7 @@ import {
   api,
   type Project,
   type Agent,
+  type Thread,
   type ThreadStatus,
   type ProjectAgentWorkspace,
 } from "../api";
