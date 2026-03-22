@@ -90,6 +90,16 @@ function isPendingSessionId(id: string | null | undefined): boolean {
   return id != null && id.startsWith(SESSION_PENDING_PREFIX);
 }
 
+/** Latest `threads.session_id` for optimistic-lock style checks before mutating a pending claim. */
+async function getThreadSessionId(threadId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ sessionId: threads.sessionId })
+    .from(threads)
+    .where(eq(threads.id, threadId))
+    .limit(1);
+  return row?.sessionId ?? null;
+}
+
 /**
  * Resolves `threads.session_id`: returns a real provider session id, using a prefixed pending claim
  * so placeholders are never confused with resumable CLI ids.
@@ -108,6 +118,11 @@ async function ensureThreadSessionId(
     }
 
     if (current != null && isPendingSessionId(current)) {
+      const verifiedBefore = await getThreadSessionId(threadId);
+      if (verifiedBefore !== current) {
+        current = verifiedBefore;
+        continue;
+      }
       try {
         const realId = await createCliSession({ cwd: agentDir });
         const updated = await db
@@ -117,18 +132,16 @@ async function ensureThreadSessionId(
           .returning();
         if (updated.length > 0) return realId;
       } catch (err) {
-        await db
-          .update(threads)
-          .set({ sessionId: null })
-          .where(and(eq(threads.id, threadId), eq(threads.sessionId, current)));
+        const verifiedCatch = await getThreadSessionId(threadId);
+        if (verifiedCatch === current) {
+          await db
+            .update(threads)
+            .set({ sessionId: null })
+            .where(and(eq(threads.id, threadId), eq(threads.sessionId, current)));
+        }
         throw err;
       }
-      const [afterPending] = await db
-        .select({ sessionId: threads.sessionId })
-        .from(threads)
-        .where(eq(threads.id, threadId))
-        .limit(1);
-      current = afterPending?.sessionId ?? null;
+      current = await getThreadSessionId(threadId);
       continue;
     }
 
@@ -139,6 +152,11 @@ async function ensureThreadSessionId(
       .where(and(eq(threads.id, threadId), isNull(threads.sessionId)))
       .returning();
     if (claimed.length > 0) {
+      const verifiedClaim = await getThreadSessionId(threadId);
+      if (verifiedClaim !== placeholder) {
+        current = verifiedClaim;
+        continue;
+      }
       try {
         const realId = await createCliSession({ cwd: agentDir });
         const swapped = await db
@@ -148,29 +166,22 @@ async function ensureThreadSessionId(
           .returning();
         if (swapped.length > 0) return realId;
       } catch (err) {
-        await db
-          .update(threads)
-          .set({ sessionId: null })
-          .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
+        const verifiedCatch = await getThreadSessionId(threadId);
+        if (verifiedCatch === placeholder) {
+          await db
+            .update(threads)
+            .set({ sessionId: null })
+            .where(and(eq(threads.id, threadId), eq(threads.sessionId, placeholder)));
+        }
         throw err;
       }
-      const [afterClaim] = await db
-        .select({ sessionId: threads.sessionId })
-        .from(threads)
-        .where(eq(threads.id, threadId))
-        .limit(1);
-      current = afterClaim?.sessionId ?? null;
+      current = await getThreadSessionId(threadId);
       continue;
     }
 
-    const [row] = await db
-      .select({ sessionId: threads.sessionId })
-      .from(threads)
-      .where(eq(threads.id, threadId))
-      .limit(1);
-    current = row?.sessionId ?? null;
+    current = await getThreadSessionId(threadId);
     if (current == null || current === "") {
-      throw new Error("Failed to claim or read thread session_id");
+      continue;
     }
   }
 
@@ -183,7 +194,10 @@ const RESUME_SESSION_INVALIDATION_MARKERS = [
   "session not found",
   "invalid session",
   "session corrupted",
-  "checkpoint",
+  "checkpoint corrupted",
+  "checkpoint mismatch",
+  "checkpoint not found",
+  "checkpoint state mismatch",
   "state mismatch",
   "invalid session id",
   "unknown session",
