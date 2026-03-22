@@ -36,6 +36,13 @@
       "when": 1774100000002,
       "tag": "0004_threads_board_kickoff_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774195626716,
+      "tag": "0005_quick_power_man",
+      "breakpoints": true
     }
   ]
 }

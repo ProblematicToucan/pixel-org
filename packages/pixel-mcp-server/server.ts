@@ -408,6 +408,149 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "pixel_create_approval_request",
+    {
+      description:
+        "Request approval from your direct manager (parent agent) on a thread you own. Requires thread in_progress; enqueues the approver to run. Use for high-risk work before execution.",
+      inputSchema: z.object({
+        projectId: z.string().describe("Project UUID"),
+        sourceThreadId: z.string().describe("Thread UUID (you must be the thread owner)"),
+        summary: z.string().describe("What you want approved (one short paragraph)"),
+        approverAgentId: z
+          .string()
+          .optional()
+          .describe("Optional; defaults to your parent_id (direct manager)"),
+        metadata: z.string().optional().describe("Optional JSON string for extra context"),
+        idempotencyKey: z.string().optional().describe("Optional dedupe key for retries"),
+      }),
+    },
+    async (args: {
+      projectId?: string;
+      sourceThreadId?: string;
+      summary?: string;
+      approverAgentId?: string;
+      metadata?: string;
+      idempotencyKey?: string;
+    }): Promise<CallToolResult> => {
+      const projectId = args?.projectId ?? "";
+      const sourceThreadId = args?.sourceThreadId ?? "";
+      const summary = args?.summary ?? "";
+      if (!projectId || !sourceThreadId || !summary.trim()) {
+        return {
+          content: [{ type: "text", text: "Error: projectId, sourceThreadId, and summary are required" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await backend.createApprovalRequest({
+          projectId,
+          sourceThreadId,
+          summary: summary.trim(),
+          approverAgentId: args?.approverAgentId?.trim() || null,
+          metadata: args?.metadata ?? null,
+          idempotencyKey: args?.idempotencyKey ?? null,
+        });
+        const text = JSON.stringify(result, null, 2);
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_list_approval_requests",
+    {
+      description:
+        "List approval requests for the current agent: as approver (inbox) or as requester. Filter by status (e.g. pending).",
+      inputSchema: z.object({
+        as: z
+          .enum(["approver", "requester"])
+          .describe("approver = your inbox; requester = requests you created"),
+        status: z
+          .enum(["pending", "approved", "rejected", "cancelled"])
+          .optional()
+          .describe("Optional status filter"),
+      }),
+    },
+    async (args: { as?: string; status?: string }): Promise<CallToolResult> => {
+      const as = args?.as === "requester" ? "requester" : "approver";
+      try {
+        const list = await backend.listApprovalRequests({
+          as,
+          status: args?.status as "pending" | "approved" | "rejected" | "cancelled" | undefined,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(list, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_resolve_approval_request",
+    {
+      description:
+        "Approve or reject a pending approval request. Only the assigned approver may call this. Posts an audit line on the source thread and notifies the requester.",
+      inputSchema: z.object({
+        approvalRequestId: z.string().describe("Approval request UUID"),
+        decision: z.enum(["approved", "rejected"]),
+        resolutionNote: z.string().optional().describe("Short rationale"),
+      }),
+    },
+    async (args: {
+      approvalRequestId?: string;
+      decision?: "approved" | "rejected";
+      resolutionNote?: string;
+    }): Promise<CallToolResult> => {
+      const id = args?.approvalRequestId ?? "";
+      const decision = args?.decision;
+      if (!id || !decision) {
+        return {
+          content: [{ type: "text", text: "Error: approvalRequestId and decision are required" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await backend.resolveApprovalRequest({
+          approvalRequestId: id,
+          decision,
+          resolutionNote: args?.resolutionNote ?? null,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_cancel_approval_request",
+    {
+      description: "Cancel a pending approval request (requester only).",
+      inputSchema: z.object({
+        approvalRequestId: z.string().describe("Approval request UUID"),
+      }),
+    },
+    async (args: { approvalRequestId?: string }): Promise<CallToolResult> => {
+      const id = args?.approvalRequestId ?? "";
+      if (!id) {
+        return { content: [{ type: "text", text: "Error: approvalRequestId is required" }], isError: true };
+      }
+      try {
+        const result = await backend.cancelApprovalRequest(id);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
     "pixel_get_context",
     {
       description:

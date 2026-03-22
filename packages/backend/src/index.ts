@@ -16,6 +16,12 @@ import {
   canAssignThreadOwner,
 } from "./services/visible-work.js";
 import {
+  cancelApprovalRequest,
+  createApprovalRequest,
+  listApprovalRequestsForAgent,
+  resolveApprovalRequest,
+} from "./services/approvals.js";
+import {
   enqueueKickoffLeadRun,
   enqueueThreadOwnerRunOnMessage,
   reconcileActiveRunsForReadEndpoint,
@@ -373,6 +379,150 @@ app.get(
       res.json(work);
     } catch (err) {
       throw new HttpError(500, "Failed to get visible work", { cause: err });
+    }
+  })
+);
+
+/** List approval requests where this agent is approver or requester (`as` query: approver | requester). */
+app.get(
+  "/agents/:id/approval-requests",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid agent id" });
+        return;
+      }
+      const asRaw = typeof req.query.as === "string" ? req.query.as.trim().toLowerCase() : "approver";
+      const as = asRaw === "requester" ? "requester" : "approver";
+      const statusRaw = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : "";
+      const validStatuses = ["pending", "approved", "rejected", "cancelled"] as const;
+      const status = validStatuses.includes(statusRaw as (typeof validStatuses)[number])
+        ? (statusRaw as (typeof validStatuses)[number])
+        : undefined;
+      const rows = await listApprovalRequestsForAgent({ agentId: id, as, status });
+      res.json(rows);
+    } catch (err) {
+      throw new HttpError(500, "Failed to list approval requests", { cause: err });
+    }
+  })
+);
+
+app.post(
+  "/approval-requests",
+  asyncHandler(async (req, res) => {
+    try {
+      const {
+        requesterAgentId,
+        projectId,
+        sourceThreadId,
+        summary,
+        approverAgentId,
+        metadata,
+        idempotencyKey,
+      } = req.body ?? {};
+      if (!requesterAgentId || !projectId || !sourceThreadId || summary == null) {
+        res.status(400).json({ error: "requesterAgentId, projectId, sourceThreadId, and summary are required" });
+        return;
+      }
+      const result = await createApprovalRequest({
+        requesterAgentId: String(requesterAgentId).trim(),
+        projectId: String(projectId).trim(),
+        sourceThreadId: String(sourceThreadId).trim(),
+        summary: String(summary).trim(),
+        approverAgentId:
+          approverAgentId === undefined || approverAgentId === null ? null : String(approverAgentId).trim(),
+        metadata: metadata === undefined || metadata === null ? null : String(metadata),
+        idempotencyKey:
+          idempotencyKey === undefined || idempotencyKey === null ? null : String(idempotencyKey).trim(),
+      });
+      res.status(result.created ? 201 : 200).json({
+        success: true,
+        created: result.created,
+        approval: result.approval,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("must be") ||
+        msg.includes("Only") ||
+        msg.includes("Approver") ||
+        msg.includes("required") ||
+        msg.includes("does not match")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to create approval request", { cause: err });
+    }
+  })
+);
+
+app.patch(
+  "/approval-requests/:id/resolve",
+  asyncHandler(async (req, res) => {
+    try {
+      const approvalId = routeParam(req, "id");
+      const { resolverAgentId, decision, resolutionNote } = req.body ?? {};
+      if (!approvalId || !resolverAgentId || !decision) {
+        res.status(400).json({ error: "approval id (path), resolverAgentId, and decision are required" });
+        return;
+      }
+      const d = String(decision).trim().toLowerCase();
+      if (d !== "approved" && d !== "rejected") {
+        res.status(400).json({ error: "decision must be approved or rejected" });
+        return;
+      }
+      await resolveApprovalRequest({
+        approvalId,
+        resolverAgentId: String(resolverAgentId).trim(),
+        decision: d,
+        resolutionNote:
+          resolutionNote === undefined || resolutionNote === null ? null : String(resolutionNote).trim(),
+      });
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("not pending") ||
+        msg.includes("Only the assigned approver")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to resolve approval request", { cause: err });
+    }
+  })
+);
+
+app.patch(
+  "/approval-requests/:id/cancel",
+  asyncHandler(async (req, res) => {
+    try {
+      const approvalId = routeParam(req, "id");
+      const { requesterAgentId } = req.body ?? {};
+      if (!approvalId || !requesterAgentId) {
+        res.status(400).json({ error: "approval id (path) and requesterAgentId are required" });
+        return;
+      }
+      await cancelApprovalRequest({
+        approvalId,
+        requesterAgentId: String(requesterAgentId).trim(),
+      });
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("Only the requester") ||
+        msg.includes("Only pending")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to cancel approval request", { cause: err });
     }
   })
 );

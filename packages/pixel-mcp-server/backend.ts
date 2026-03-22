@@ -199,3 +199,72 @@ export async function postMessage(threadId: string, content: string): Promise<{ 
     content,
   });
 }
+
+export type ApprovalRequestRow = {
+  id: string;
+  projectId: string;
+  sourceThreadId: string;
+  requesterAgentId: string;
+  approverAgentId: string;
+  summary: string;
+  status: string;
+  resolutionNote: string | null;
+  metadata: string | null;
+  idempotencyKey: string;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+/** Thread owner requests approval from their direct manager (parent). Enqueues approver run. */
+export async function createApprovalRequest(input: {
+  projectId: string;
+  sourceThreadId: string;
+  summary: string;
+  approverAgentId?: string | null;
+  metadata?: string | null;
+  idempotencyKey?: string | null;
+}): Promise<{ success: boolean; created: boolean; approval: ApprovalRequestRow }> {
+  return post("/approval-requests", {
+    requesterAgentId: agentId(),
+    projectId: input.projectId,
+    sourceThreadId: input.sourceThreadId,
+    summary: input.summary,
+    approverAgentId: input.approverAgentId ?? null,
+    metadata: input.metadata ?? null,
+    idempotencyKey: input.idempotencyKey ?? null,
+  });
+}
+
+/** List approvals where the current agent is approver or requester. */
+export async function listApprovalRequests(options: {
+  as: "approver" | "requester";
+  status?: "pending" | "approved" | "rejected" | "cancelled";
+}): Promise<ApprovalRequestRow[]> {
+  const q = new URLSearchParams({ as: options.as });
+  if (options.status) {
+    q.set("status", options.status);
+  }
+  return get<ApprovalRequestRow[]>(
+    `/agents/${encodeURIComponent(agentId())}/approval-requests?${q.toString()}`
+  );
+}
+
+/** Approver resolves a pending approval (must be the assigned approver). */
+export async function resolveApprovalRequest(input: {
+  approvalRequestId: string;
+  decision: "approved" | "rejected";
+  resolutionNote?: string | null;
+}): Promise<{ success: boolean }> {
+  return patch(`/approval-requests/${encodeURIComponent(input.approvalRequestId)}/resolve`, {
+    resolverAgentId: agentId(),
+    decision: input.decision,
+    resolutionNote: input.resolutionNote ?? null,
+  });
+}
+
+/** Requester cancels a pending approval. */
+export async function cancelApprovalRequest(approvalRequestId: string): Promise<{ success: boolean }> {
+  return patch(`/approval-requests/${encodeURIComponent(approvalRequestId)}/cancel`, {
+    requesterAgentId: agentId(),
+  });
+}
