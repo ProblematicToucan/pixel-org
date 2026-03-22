@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db, agents, approvalRequests, threads, messages } from "../db/index.js";
 import { enqueueApprovalPendingRun, enqueueThreadOwnerRunOnMessage } from "./orchestration.js";
+import { emitThreadMessage } from "../threadMessageSse.js";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "cancelled";
 
@@ -85,17 +86,24 @@ export async function createApprovalRequest(input: {
   }
 
   const messageId = randomUUID();
-  await db.insert(messages).values({
+  const createdAtCreate = new Date();
+  const insertedCreate = {
     id: messageId,
     threadId: input.sourceThreadId,
     agentId: input.requesterAgentId,
-    actorType: "agent",
+    actorType: "agent" as const,
     actorName: requester.name,
     content: [
       `[Approval requested] id=${id}`,
       `Summary: ${input.summary.trim()}`,
       `Approver: ${approver.name} (${approverId})`,
     ].join("\n"),
+    createdAt: createdAtCreate,
+  };
+  await db.insert(messages).values(insertedCreate);
+  emitThreadMessage(input.sourceThreadId, {
+    ...insertedCreate,
+    createdAt: createdAtCreate.toISOString(),
   });
 
   await enqueueApprovalPendingRun({
@@ -168,13 +176,20 @@ export async function resolveApprovalRequest(input: {
 
   const messageId = randomUUID();
   const noteLine = input.resolutionNote?.trim() ? `Note: ${input.resolutionNote.trim()}` : "";
-  await db.insert(messages).values({
+  const createdAtResolve = new Date();
+  const insertedResolve = {
     id: messageId,
     threadId: row.sourceThreadId,
     agentId: resolver.id,
-    actorType: "agent",
+    actorType: "agent" as const,
     actorName: resolver.name,
     content: [`[Approval ${input.decision}] id=${row.id}`, noteLine].filter((l) => l !== "").join("\n"),
+    createdAt: createdAtResolve,
+  };
+  await db.insert(messages).values(insertedResolve);
+  emitThreadMessage(row.sourceThreadId, {
+    ...insertedResolve,
+    createdAt: createdAtResolve.toISOString(),
   });
 
   void enqueueThreadOwnerRunOnMessage({

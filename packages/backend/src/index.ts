@@ -40,6 +40,7 @@ import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
 import { HttpError } from "./httpError.js";
 import { reportErrorToHealer } from "./healerClient.js";
+import { emitThreadMessage, subscribeThreadMessageStream } from "./threadMessageSse.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -58,17 +59,6 @@ function routeParam(req: express.Request, name: string): string {
   if (Array.isArray(v)) return (v[0] ?? "").trim();
   return (v ?? "").trim();
 }
-const threadMessageStreams = new Map<string, Set<express.Response>>();
-
-function emitThreadMessage(threadId: string, payload: unknown): void {
-  const listeners = threadMessageStreams.get(threadId);
-  if (!listeners || listeners.size === 0) return;
-  const event = `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const res of listeners) {
-    res.write(event);
-  }
-}
-
 /** PostgreSQL `unique_violation` (e.g. partial unique index); may be nested under Drizzle/pg driver errors. */
 function isPostgresUniqueViolation(err: unknown): boolean {
   let current: unknown = err;
@@ -1005,12 +995,7 @@ app.get("/threads/:id/stream", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  let listeners = threadMessageStreams.get(threadId);
-  if (!listeners) {
-    listeners = new Set();
-    threadMessageStreams.set(threadId, listeners);
-  }
-  listeners.add(res);
+  const unsubscribe = subscribeThreadMessageStream(threadId, res);
   res.write("event: connected\ndata: ok\n\n");
 
   const heartbeat = setInterval(() => {
@@ -1019,12 +1004,7 @@ app.get("/threads/:id/stream", async (req, res) => {
 
   req.on("close", () => {
     clearInterval(heartbeat);
-    const current = threadMessageStreams.get(threadId);
-    if (!current) return;
-    current.delete(res);
-    if (current.size === 0) {
-      threadMessageStreams.delete(threadId);
-    }
+    unsubscribe();
   });
 });
 
