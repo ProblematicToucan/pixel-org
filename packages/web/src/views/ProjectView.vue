@@ -33,6 +33,9 @@ const artifactsLoading = ref(false);
 const artifactsLoadError = ref<string | null>(null);
 /** True after a successful fetch for the current project (while section is open). */
 const artifactsFetched = ref(false);
+/** True only while re-fetching after Refresh (keeps list visible; no unload). */
+const artifactsRefreshing = ref(false);
+const artifactsRefreshError = ref<string | null>(null);
 const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
 const copiedArtifactId = ref<string | null>(null);
 let artifactCopyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,6 +173,7 @@ async function loadAgentWorkspaces() {
   if (!projectId.value || artifactsFetched.value) return;
   artifactsLoading.value = true;
   artifactsLoadError.value = null;
+  artifactsRefreshError.value = null;
   try {
     agentWorkspaces.value = await api.getProjectAgentWorkspaces(projectId.value);
     artifactsFetched.value = true;
@@ -187,16 +191,24 @@ function onArtifactsToggle(ev: Event) {
 }
 
 async function refreshArtifacts() {
-  artifactsFetched.value = false;
-  agentWorkspaces.value = [];
-  artifactsLoadError.value = null;
-  await loadAgentWorkspaces();
+  if (!projectId.value || artifactsRefreshing.value) return;
+  artifactsRefreshing.value = true;
+  artifactsRefreshError.value = null;
+  try {
+    agentWorkspaces.value = await api.getProjectAgentWorkspaces(projectId.value);
+    artifactsFetched.value = true;
+  } catch (e) {
+    artifactsRefreshError.value = e instanceof Error ? e.message : "Failed to refresh";
+  } finally {
+    artifactsRefreshing.value = false;
+  }
 }
 
 watch(projectId, () => {
   artifactsFetched.value = false;
   agentWorkspaces.value = [];
   artifactsLoadError.value = null;
+  artifactsRefreshError.value = null;
   if (artifactsPanelRef.value?.open) {
     void loadAgentWorkspaces();
   }
@@ -303,11 +315,13 @@ onUnmounted(() => {
               <button
                 type="button"
                 class="artifacts-refresh"
-                :disabled="artifactsLoading"
+                :disabled="artifactsRefreshing"
+                :aria-busy="artifactsRefreshing"
                 @click="refreshArtifacts"
               >
                 Refresh
               </button>
+              <p v-if="artifactsRefreshError" class="artifacts-refresh-error">{{ artifactsRefreshError }}</p>
             </div>
           </template>
           <p v-else class="artifacts-placeholder">Expand to load the list.</p>
@@ -546,7 +560,17 @@ h1 {
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+.artifacts-refresh-error {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--error);
+  text-align: right;
+  max-width: 100%;
 }
 .artifacts-refresh {
   padding: 0.4rem 0.9rem;
