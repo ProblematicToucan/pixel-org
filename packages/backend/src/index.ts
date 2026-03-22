@@ -63,6 +63,18 @@ function emitThreadMessage(threadId: string, payload: unknown): void {
   }
 }
 
+/** PostgreSQL `unique_violation` (e.g. partial unique index); may be nested under Drizzle/pg driver errors. */
+function isPostgresUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if ((current as { code?: string }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 function buildProjectSlug(name: string): string {
   const base = name
     .trim()
@@ -461,6 +473,94 @@ app.patch(
       res.json({ success: true });
     } catch (err) {
       throw new HttpError(500, "Failed to update project", { cause: err });
+    }
+  })
+);
+
+/**
+ * Atomically creates the Board kickoff thread, posts the goals message as Board, then enqueues lead kickoff.
+ * Ensures goals appear in the thread before orchestration inserts "Status: Started" (see setTimeout(0) dispatcher).
+ */
+app.post(
+  "/projects/:id/board-kickoff",
+  asyncHandler(async (req, res) => {
+    try {
+      const projectId = routeParam(req, "id");
+      const { agentId, goals } = req.body as { agentId?: string; goals?: unknown };
+      if (!projectId) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const ownerId = typeof agentId === "string" ? agentId.trim() : "";
+      const goalsText = typeof goals === "string" ? goals.trim() : "";
+      if (!ownerId) {
+        res.status(400).json({ error: "agentId is required" });
+        return;
+      }
+      if (!goalsText) {
+        res.status(400).json({ error: "goals is required" });
+        return;
+      }
+      const [projectRow] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (!projectRow) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
+      if (!ownerRow) {
+        res.status(400).json({ error: "agentId not found" });
+        return;
+      }
+      const threadId = randomUUID();
+      const messageId = randomUUID();
+      const createdAt = new Date();
+      const boardContent = `Project goals:\n\n${goalsText}`;
+      const inserted = {
+        id: messageId,
+        threadId,
+        agentId: null,
+        actorType: "board" as const,
+        actorName: "Board of Directors",
+        content: boardContent,
+        createdAt,
+      };
+      try {
+        await db.transaction(async (tx) => {
+          await tx.insert(threads).values({
+            id: threadId,
+            projectId,
+            agentId: ownerId,
+            title: "Board kickoff",
+            status: "in_progress",
+          });
+          await tx.insert(messages).values(inserted);
+        });
+      } catch (err) {
+        if (isPostgresUniqueViolation(err)) {
+          res.status(409).json({ error: "Board kickoff thread already exists for this project" });
+          return;
+        }
+        throw err;
+      }
+      emitThreadMessage(threadId, {
+        ...inserted,
+        createdAt: createdAt.toISOString(),
+      });
+      await enqueueKickoffLeadRun({
+        projectId,
+        threadId,
+        title: "Board kickoff",
+        preferredAgentId: ownerId,
+      });
+      res.status(201).json({
+        success: true,
+        id: threadId,
+        projectId,
+        agentId: ownerId,
+        status: "in_progress" as const,
+      });
+    } catch (err) {
+      throw new HttpError(500, "Failed to create board kickoff", { cause: err });
     }
   })
 );
