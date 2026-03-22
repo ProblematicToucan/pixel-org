@@ -1,7 +1,0 @@
-# Ignore all agent workspace data under this folder.
-#
-# We keep only repo-level metadata (README + .gitkeep + this file) tracked.
-*
-!README.md
-!.gitkeep
-!.gitignore
