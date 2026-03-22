@@ -9,11 +9,13 @@ const panelOpen = ref(false);
 let pollTimer: number | null = null;
 
 const hasActiveRuns = computed(() => activeRuns.value.length > 0);
-const floatingLabel = computed(() =>
-  hasActiveRuns.value
-    ? `${activeRuns.value.length} agent run${activeRuns.value.length === 1 ? "" : "s"} active`
-    : "No active agent runs",
-);
+const floatingLabel = computed(() => {
+  if (runsError.value) return "Failed to load agent runs";
+  if (hasActiveRuns.value) {
+    return `${activeRuns.value.length} agent run${activeRuns.value.length === 1 ? "" : "s"} active`;
+  }
+  return "No active agent runs";
+});
 
 async function refreshActiveRuns() {
   try {
