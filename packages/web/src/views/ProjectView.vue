@@ -69,15 +69,9 @@ async function maybeCreateBoardKickoff(goals: string) {
   const boardAgentId = getBoardAgentId();
   if (!projectId.value || !goals || !boardAgentId || hasBoardKickoffThread()) return false;
 
-  const created = await api.createThread(projectId.value, {
+  await api.createBoardKickoff(projectId.value, {
     agentId: boardAgentId,
-    title: "Board kickoff",
-    /** So the kickoff thread is active work and lead/agent runs align with orchestration. */
-    status: "in_progress",
-  });
-
-  await api.postBoardMessage(created.id, {
-    content: `Project goals:\n\n${goals}`,
+    goals,
   });
 
   return true;

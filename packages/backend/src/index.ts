@@ -28,7 +28,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import fs from "node:fs";
 import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
@@ -461,6 +461,98 @@ app.patch(
       res.json({ success: true });
     } catch (err) {
       throw new HttpError(500, "Failed to update project", { cause: err });
+    }
+  })
+);
+
+/**
+ * Atomically creates the Board kickoff thread, posts the goals message as Board, then enqueues lead kickoff.
+ * Ensures goals appear in the thread before orchestration inserts "Status: Started" (see setTimeout(0) dispatcher).
+ */
+app.post(
+  "/projects/:id/board-kickoff",
+  asyncHandler(async (req, res) => {
+    try {
+      const projectId = routeParam(req, "id");
+      const { agentId, goals } = req.body as { agentId?: string; goals?: unknown };
+      if (!projectId) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const ownerId = typeof agentId === "string" ? agentId.trim() : "";
+      const goalsText = typeof goals === "string" ? goals.trim() : "";
+      if (!ownerId) {
+        res.status(400).json({ error: "agentId is required" });
+        return;
+      }
+      if (!goalsText) {
+        res.status(400).json({ error: "goals is required" });
+        return;
+      }
+      const [projectRow] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (!projectRow) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
+      if (!ownerRow) {
+        res.status(400).json({ error: "agentId not found" });
+        return;
+      }
+      const existingKickoff = await db
+        .select()
+        .from(threads)
+        .where(
+          and(
+            eq(threads.projectId, projectId),
+            sql`lower(trim(coalesce(${threads.title}, ''))) = 'board kickoff'`
+          )
+        )
+        .limit(1);
+      if (existingKickoff.length > 0) {
+        res.status(409).json({ error: "Board kickoff thread already exists for this project" });
+        return;
+      }
+      const threadId = randomUUID();
+      await db.insert(threads).values({
+        id: threadId,
+        projectId,
+        agentId: ownerId,
+        title: "Board kickoff",
+        status: "in_progress",
+      });
+      const messageId = randomUUID();
+      const createdAt = new Date();
+      const boardContent = `Project goals:\n\n${goalsText}`;
+      const inserted = {
+        id: messageId,
+        threadId,
+        agentId: null,
+        actorType: "board" as const,
+        actorName: "Board of Directors",
+        content: boardContent,
+        createdAt,
+      };
+      await db.insert(messages).values(inserted);
+      emitThreadMessage(threadId, {
+        ...inserted,
+        createdAt: createdAt.toISOString(),
+      });
+      await enqueueKickoffLeadRun({
+        projectId,
+        threadId,
+        title: "Board kickoff",
+        preferredAgentId: ownerId,
+      });
+      res.status(201).json({
+        success: true,
+        id: threadId,
+        projectId,
+        agentId: ownerId,
+        status: "in_progress" as const,
+      });
+    } catch (err) {
+      throw new HttpError(500, "Failed to create board kickoff", { cause: err });
     }
   })
 );

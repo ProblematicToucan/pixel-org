@@ -197,6 +197,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  /** Creates Board kickoff thread + goals message + kickoff run in one request (correct message order). */
+  createBoardKickoff: (
+    projectId: string,
+    body: { agentId: string; goals: string }
+  ) =>
+    fetchApi<{
+      success: boolean;
+      id: string;
+      projectId: string;
+      agentId: string;
+      status: ThreadStatus;
+    }>("/projects/" + encodeURIComponent(projectId) + "/board-kickoff", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   patchThreadStatusAsBoard: (threadId: string, status: ThreadStatus) =>
     fetchApi<{ success: boolean; status: string; message?: string }>(
       "/threads/" + encodeURIComponent(threadId) + "/status",
