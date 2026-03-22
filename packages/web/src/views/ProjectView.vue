@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
-import { api, type Project, type Agent, type ThreadStatus } from "../api";
+import {
+  api,
+  type Project,
+  type Agent,
+  type Thread,
+  type ThreadStatus,
+  type ProjectAgentWorkspace,
+} from "../api";
 import { THREAD_STATUS_OPTIONS, normalizeThreadStatus } from "../threadStatus";
 
 const route = useRoute();
@@ -21,6 +28,33 @@ const goalsNotice = ref<string | null>(null);
 const statusFilter = ref<"" | ThreadStatus>("");
 const newThreadStatus = ref<ThreadStatus>("not_started");
 const statusUpdating = ref<Record<string, boolean>>({});
+const agentWorkspaces = ref<ProjectAgentWorkspace[]>([]);
+const artifactsLoading = ref(false);
+const artifactsLoadError = ref<string | null>(null);
+/** True after a successful fetch for the current project (while section is open). */
+const artifactsFetched = ref(false);
+/** True only while re-fetching after Refresh (keeps list visible; no unload). */
+const artifactsRefreshing = ref(false);
+const artifactsRefreshError = ref<string | null>(null);
+const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
+const copiedArtifactId = ref<string | null>(null);
+let artifactCopyTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Bumped when `projectId` changes or a new artifacts fetch starts; stale responses are ignored. */
+let artifactsRequestId = 0;
+
+async function copyArtifactPath(agentId: string, path: string) {
+  try {
+    await navigator.clipboard.writeText(path);
+    copiedArtifactId.value = agentId;
+    if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
+    artifactCopyTimer = setTimeout(() => {
+      copiedArtifactId.value = null;
+    }, 1600);
+  } catch {
+    // clipboard unavailable
+  }
+}
 
 function getBoardAgentId() {
   const lead = agents.value.find((agent) => agent.isLead);
@@ -138,6 +172,66 @@ function agentName(id: string) {
   return agents.value.find((a) => a.id === id)?.name ?? id;
 }
 
+async function loadAgentWorkspaces() {
+  if (!projectId.value || artifactsFetched.value) return;
+  const requestId = ++artifactsRequestId;
+  const pid = projectId.value;
+  artifactsLoading.value = true;
+  artifactsLoadError.value = null;
+  artifactsRefreshError.value = null;
+  try {
+    const result = await api.getProjectAgentWorkspaces(pid);
+    if (requestId !== artifactsRequestId) return;
+    agentWorkspaces.value = result;
+    artifactsFetched.value = true;
+  } catch (e) {
+    if (requestId !== artifactsRequestId) return;
+    artifactsLoadError.value = e instanceof Error ? e.message : "Failed to load";
+    agentWorkspaces.value = [];
+  } finally {
+    if (requestId === artifactsRequestId) {
+      artifactsLoading.value = false;
+    }
+  }
+}
+
+function onArtifactsToggle(ev: Event) {
+  const el = ev.target as HTMLDetailsElement;
+  if (el.open) void loadAgentWorkspaces();
+}
+
+async function refreshArtifacts() {
+  if (!projectId.value || artifactsRefreshing.value) return;
+  const requestId = ++artifactsRequestId;
+  const pid = projectId.value;
+  artifactsRefreshing.value = true;
+  artifactsRefreshError.value = null;
+  try {
+    const result = await api.getProjectAgentWorkspaces(pid);
+    if (requestId !== artifactsRequestId) return;
+    agentWorkspaces.value = result;
+    artifactsFetched.value = true;
+  } catch (e) {
+    if (requestId !== artifactsRequestId) return;
+    artifactsRefreshError.value = e instanceof Error ? e.message : "Failed to refresh";
+  } finally {
+    if (requestId === artifactsRequestId) {
+      artifactsRefreshing.value = false;
+    }
+  }
+}
+
+watch(projectId, () => {
+  artifactsRequestId += 1;
+  artifactsFetched.value = false;
+  agentWorkspaces.value = [];
+  artifactsLoadError.value = null;
+  artifactsRefreshError.value = null;
+  if (artifactsPanelRef.value?.open) {
+    void loadAgentWorkspaces();
+  }
+});
+
 async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
   const current = threads.value.find((t) => t.id === threadId);
   const prev = current ? normalizeThreadStatus(current.status) : null;
@@ -155,6 +249,10 @@ async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
 }
 
 onMounted(load);
+
+onUnmounted(() => {
+  if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
+});
 </script>
 
 <template>
@@ -198,6 +296,55 @@ onMounted(load);
           <p v-if="goalsNotice" class="goals-notice">{{ goalsNotice }}</p>
         </div>
       </section>
+
+      <details ref="artifactsPanelRef" class="artifacts-panel" @toggle="onArtifactsToggle">
+        <summary class="artifacts-summary">
+          <span class="artifacts-summary-main">
+            <span class="artifacts-summary-title">Artifacts</span>
+            <span class="artifacts-summary-hint">Agents with outputs for this project</span>
+          </span>
+          <span class="artifacts-chevron" aria-hidden="true" />
+        </summary>
+        <div class="artifacts-panel-body">
+          <div v-if="artifactsLoading" class="artifacts-state">
+            <span class="artifacts-spinner" aria-hidden="true" />
+            Loading…
+          </div>
+          <p v-else-if="artifactsLoadError" class="artifacts-state artifacts-state-error">{{ artifactsLoadError }}</p>
+          <template v-else-if="artifactsFetched">
+            <ul v-if="agentWorkspaces.length" class="workspace-list">
+              <li v-for="ws in agentWorkspaces" :key="ws.agentId" class="workspace-card">
+                <div class="workspace-card-main">
+                  <span class="workspace-name">{{ ws.name }}</span>
+                  <span class="workspace-role">{{ ws.role }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="workspace-copy"
+                  :title="'Copy artifact path: ' + ws.artifactsPath"
+                  @click="copyArtifactPath(ws.agentId, ws.artifactsPath)"
+                >
+                  {{ copiedArtifactId === ws.agentId ? "Copied" : "Copy path" }}
+                </button>
+              </li>
+            </ul>
+            <p v-else class="artifacts-empty">No agents with artifacts yet. Runs on this project create folders per agent.</p>
+            <div class="artifacts-footer">
+              <button
+                type="button"
+                class="artifacts-refresh"
+                :disabled="artifactsRefreshing"
+                :aria-busy="artifactsRefreshing"
+                @click="refreshArtifacts"
+              >
+                Refresh
+              </button>
+              <p v-if="artifactsRefreshError" class="artifacts-refresh-error">{{ artifactsRefreshError }}</p>
+            </div>
+          </template>
+          <p v-else class="artifacts-placeholder">Expand to load the list.</p>
+        </div>
+      </details>
 
       <section class="create-thread">
         <h2>New thread</h2>
@@ -325,6 +472,201 @@ h1 {
   margin: 0 0 0.5rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+.artifacts-panel {
+  margin-top: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.artifacts-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: background 0.12s ease;
+}
+.artifacts-summary:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.artifacts-summary::-webkit-details-marker {
+  display: none;
+}
+.artifacts-summary-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.artifacts-summary-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.artifacts-summary-hint {
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.artifacts-chevron {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  position: relative;
+}
+.artifacts-chevron::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: translate(-50%, -50%) rotate(45deg);
+  transition: transform 0.18s ease;
+}
+.artifacts-panel[open] .artifacts-chevron::after {
+  transform: translate(-50%, -35%) rotate(-135deg);
+}
+.artifacts-panel-body {
+  padding: 0 1.1rem 1.1rem;
+  border-top: 1px solid var(--border);
+}
+.artifacts-placeholder,
+.artifacts-empty {
+  margin: 0.85rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.artifacts-state {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.artifacts-state-error {
+  color: var(--error);
+}
+.artifacts-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: artifacts-spin 0.65s linear infinite;
+}
+@keyframes artifacts-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.artifacts-footer {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+.artifacts-refresh-error {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--error);
+  text-align: right;
+  max-width: 100%;
+}
+.artifacts-refresh {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.artifacts-refresh:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.artifacts-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.workspace-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.65rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.workspace-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: var(--bg);
+}
+.workspace-card-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.65rem;
+  min-width: 0;
+  flex: 1;
+}
+.workspace-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.workspace-role {
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+.workspace-copy {
+  flex-shrink: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.workspace-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .create-thread, .threads {
   margin-top: 1.5rem;

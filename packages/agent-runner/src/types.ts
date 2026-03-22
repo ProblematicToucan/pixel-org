@@ -1,7 +1,14 @@
 /** One project's artifact path (from GET /agents/:id/visible-work). */
+export interface LinkedProject {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface VisibleProject {
   projectId: string;
   artifactsPath: string;
+  linkedProject: LinkedProject | null;
 }
 
 /** One agent's visible work (self or report). CLI can read files under each project's artifactsPath. */

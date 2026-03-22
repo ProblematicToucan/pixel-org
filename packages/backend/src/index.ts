@@ -10,7 +10,11 @@ dotenv.config({ path: path.join(rootDir, ".env") });
 import express from "express";
 import cors from "cors";
 import { db, agents, projects, threads, messages, agentRunRequests } from "./db/index.js";
-import { getVisibleWork, canAssignThreadOwner } from "./services/visible-work.js";
+import {
+  getVisibleWork,
+  getAgentWorkspacesForProject,
+  canAssignThreadOwner,
+} from "./services/visible-work.js";
 import {
   enqueueKickoffLeadRun,
   enqueueThreadOwnerRunOnMessage,
@@ -391,6 +395,28 @@ app.get(
       res.json(rows[0]);
     } catch (err) {
       throw new HttpError(500, "Failed to fetch project", { cause: err });
+    }
+  })
+);
+
+/** On-disk agent artifact workspaces for this project (folder name = project id). */
+app.get(
+  "/projects/:id/agent-workspaces",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid project id" });
+        return;
+      }
+      const workspaces = await getAgentWorkspacesForProject(db, id);
+      if (workspaces === null) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      res.json(workspaces);
+    } catch (err) {
+      throw new HttpError(500, "Failed to list agent workspaces", { cause: err });
     }
   })
 );
