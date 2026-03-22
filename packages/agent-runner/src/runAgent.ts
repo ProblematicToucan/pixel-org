@@ -24,6 +24,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
     agentId,
     backendUrl,
     model = "auto",
+    resumeSessionId,
     env = {},
     onSpawn,
   } = options;
@@ -45,7 +46,14 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   }
 
   const canReadOutsideWorkspace = visibleWork != null && visibleWork.length > 0;
-  const { command, args } = getCliInvocation(provider, task, cwd, canReadOutsideWorkspace, model);
+  const { command, args } = getCliInvocation(
+    provider,
+    task,
+    cwd,
+    canReadOutsideWorkspace,
+    model,
+    resumeSessionId
+  );
 
   return new Promise((resolve) => {
     const proc = spawn(command, args, {
@@ -110,11 +118,15 @@ function getCliInvocation(
   task: string,
   cwd: string,
   canReadOutsideWorkspace: boolean,
-  model: string
+  model: string,
+  resumeSessionId?: string
 ): { command: string; args: string[] } {
   switch (provider) {
     case "cursor": {
       const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", model];
+      if (resumeSessionId != null && resumeSessionId !== "") {
+        args.push("--resume", resumeSessionId);
+      }
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }
@@ -125,6 +137,9 @@ function getCliInvocation(
       return { command: "claude-code", args: [task] };
     default: {
       const args = ["--print", "--trust", "-f", "--workspace", cwd, "--model", model];
+      if (resumeSessionId != null && resumeSessionId !== "") {
+        args.push("--resume", resumeSessionId);
+      }
       if (canReadOutsideWorkspace) {
         args.push("--sandbox", "disabled");
       }

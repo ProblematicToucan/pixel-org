@@ -20,3 +20,5 @@ export type {
 } from "./types.js";
 
 export { runAgent } from "./runAgent.js";
+export { createCliSession } from "./createCliSession.js";
+export type { CreateCliSessionOptions } from "./createCliSession.js";

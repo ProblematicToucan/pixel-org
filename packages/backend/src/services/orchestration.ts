@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
-import { runAgent } from "@pixel-org/agent-runner";
+import { createCliSession, runAgent } from "@pixel-org/agent-runner";
+import type { RunAgentResult } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
 import {
   ensureAgentProjectLayout,
@@ -28,6 +29,55 @@ function fallbackObjectiveForRunReason(reason: string): string {
     default:
       return "Agent run";
   }
+}
+
+function buildOrchestrationAgentTask(params: {
+  reason: "kickoff_created" | "scheduled_awake" | "thread_message";
+  projectId: string;
+  threadId: string;
+  projectDir: string;
+  artifactsDir: string;
+  model: string;
+  projectGoals: string | null;
+  continuationMode: "fresh" | "continuing";
+}): string {
+  const runProtocolLines =
+    params.continuationMode === "fresh"
+      ? [
+          "Run protocol:",
+          "- Call pixel_get_context first.",
+          "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
+          "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+        ]
+      : [
+          "Run protocol:",
+          "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
+          "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
+          "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+        ];
+
+  return [
+    params.reason === "kickoff_created"
+      ? "A board kickoff thread has been created."
+      : params.reason === "thread_message"
+        ? "A new message was posted in one of your owned threads. Review it and respond with next actions."
+        : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
+    `Your workspace is ${params.projectDir} (project path). Work only inside this directory for any local file creation or edits for this project.`,
+    `Put artifacts and deliverables under ${params.artifactsDir} (subfolder of the project path above).`,
+    `The agent CLI may be spawned with a different cwd (your agent home) for MCP/skills; still treat the project path above as the only writable project workspace unless Pixel MCP explicitly requires reading elsewhere.`,
+    `Project ID: ${params.projectId}`,
+    `Thread ID: ${params.threadId}`,
+    `Reason: ${params.reason}`,
+    `Model policy: ${params.model}.`,
+    ...runProtocolLines,
+    "You MUST post at least one message to this exact thread using pixel_post_message.",
+    "Required first action: call pixel_post_message with 'Status: In Progress' and your immediate plan.",
+    "Required final action: call pixel_post_message with either 'Status: Completed' or 'Status: Blocked'.",
+    "Read project goals and react in the kickoff thread with an actionable leadership response.",
+    params.projectGoals ? `Project goals:\n${params.projectGoals}` : "Project goals are currently empty.",
+  ].join("\n");
 }
 
 /**
@@ -216,57 +266,73 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
   });
 
   try {
-    const task = [
-      request.reason === "kickoff_created"
-        ? "A board kickoff thread has been created."
-        : request.reason === "thread_message"
-          ? "A new message was posted in one of your owned threads. Review it and respond with next actions."
-          : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
-      `Your workspace is ${projectDir} (project path). Work only inside this directory for any local file creation or edits for this project.`,
-      `Put artifacts and deliverables under ${artifactsDir} (subfolder of the project path above).`,
-      `The agent CLI may be spawned with a different cwd (your agent home) for MCP/skills; still treat the project path above as the only writable project workspace unless Pixel MCP explicitly requires reading elsewhere.`,
-      `Project ID: ${request.projectId}`,
-      `Thread ID: ${request.threadId}`,
-      `Reason: ${request.reason}`,
-      `Model policy: ${request.model}.`,
-      "Run protocol:",
-      "- Call pixel_get_context first.",
-      "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-      "- If no actionable work exists, post 'Status: Completed' with 'No actionable task found in this cycle'.",
-      "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
-      "You MUST post at least one message to this exact thread using pixel_post_message.",
-      "Required first action: call pixel_post_message with 'Status: In Progress' and your immediate plan.",
-      "Required final action: call pixel_post_message with either 'Status: Completed' or 'Status: Blocked'.",
-      "Read project goals and react in the kickoff thread with an actionable leadership response.",
-      project.goals ? `Project goals:\n${project.goals}` : "Project goals are currently empty.",
-    ].join("\n");
-    const result = await runAgent({
-      provider: "cursor",
-      role: agent.role,
-      task,
-      cwd: getAgentDir({ id: agent.id, role: agent.role }),
-      timeoutMs: 20 * 60 * 1000,
-      agentId: agent.id,
-      backendUrl: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",
-      model: request.model,
-      env: {
-        PIXEL_RUN_REASON: request.reason,
-        PIXEL_PROJECT_ID: request.projectId,
-        PIXEL_PROJECT_WORKSPACE: projectDir,
-        PIXEL_PROJECT_ARTIFACTS: artifactsDir,
-      },
-      onSpawn: ({ pid, command, args }) => {
-        void db
-          .update(agentRunRequests)
-          .set({
-            pid: pid ?? null,
-            command: command ?? null,
-            args: args ? JSON.stringify(args) : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(agentRunRequests.id, request.id));
-      },
-    });
+    const agentDir = getAgentDir({ id: agent.id, role: agent.role });
+    const hadStoredSessionId = !!threadRow.sessionId;
+    let sessionId: string | null = threadRow.sessionId;
+
+    let result!: RunAgentResult;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (!sessionId) {
+        sessionId = await createCliSession({ cwd: agentDir });
+        await db
+          .update(threads)
+          .set({ sessionId })
+          .where(eq(threads.id, request.threadId));
+      }
+
+      const continuationMode =
+        hadStoredSessionId && attempt === 1 ? "continuing" : "fresh";
+      const task = buildOrchestrationAgentTask({
+        reason: request.reason as "kickoff_created" | "thread_message" | "scheduled_awake",
+        projectId: request.projectId,
+        threadId: request.threadId,
+        projectDir,
+        artifactsDir,
+        model: request.model,
+        projectGoals: project.goals,
+        continuationMode,
+      });
+
+      result = await runAgent({
+        provider: "cursor",
+        role: agent.role,
+        task,
+        cwd: agentDir,
+        timeoutMs: 20 * 60 * 1000,
+        agentId: agent.id,
+        backendUrl: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",
+        model: request.model,
+        resumeSessionId: sessionId,
+        env: {
+          PIXEL_RUN_REASON: request.reason,
+          PIXEL_PROJECT_ID: request.projectId,
+          PIXEL_PROJECT_WORKSPACE: projectDir,
+          PIXEL_PROJECT_ARTIFACTS: artifactsDir,
+        },
+        onSpawn: ({ pid, command, args }) => {
+          void db
+            .update(agentRunRequests)
+            .set({
+              pid: pid ?? null,
+              command: command ?? null,
+              args: args ? JSON.stringify(args) : null,
+              updatedAt: new Date(),
+            })
+            .where(eq(agentRunRequests.id, request.id));
+        },
+      });
+
+      if (result.success) break;
+      if (attempt === 1 && hadStoredSessionId) {
+        await db
+          .update(threads)
+          .set({ sessionId: null })
+          .where(eq(threads.id, request.threadId));
+        sessionId = null;
+        continue;
+      }
+      break;
+    }
 
     await db
       .update(agentRunRequests)
