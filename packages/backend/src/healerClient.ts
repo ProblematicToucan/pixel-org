@@ -94,27 +94,55 @@ async function getHealerBearerToken(): Promise<string | undefined> {
   return undefined;
 }
 
+const REDACTED = "[REDACTED]";
+const MAX_HEALER_CHARS = 12_000;
+
+/** Redacts likely secrets, paths, and PII before sending error text off-box. */
+export function sanitizeForHealer(s: string): string {
+  let out = s.length > MAX_HEALER_CHARS ? `${s.slice(0, MAX_HEALER_CHARS)}…` : s;
+  out = out.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED);
+  out = out.replace(/\bBearer\s+[A-Za-z0-9._~-]+\b/gi, `Bearer ${REDACTED}`);
+  out = out.replace(
+    /([?&])(key|token|secret|password|api_?key|access_?token)=[^&\s]+/gi,
+    `$1$2=${REDACTED}`,
+  );
+  out = out.replace(/(?:\/[^\s:'"<>|*?]+){2,}/g, REDACTED);
+  out = out.replace(/[A-Za-z]:\\[^\s:'"]+/g, REDACTED);
+  out = out.replace(/\b[0-9a-fA-F]{40,}\b/g, REDACTED);
+  out = out.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, REDACTED);
+  return out;
+}
+
 function messageForHealer(err: unknown): string {
-  if (err instanceof HttpError && err.cause instanceof Error) return err.cause.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
+  const raw =
+    err instanceof HttpError && err.cause instanceof Error
+      ? err.cause.message
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  return sanitizeForHealer(raw);
 }
 
 function stackForHealer(err: unknown): string | undefined {
-  if (err instanceof HttpError && err.cause instanceof Error) return err.cause.stack;
-  if (err instanceof Error) return err.stack;
-  return undefined;
+  const raw =
+    err instanceof HttpError && err.cause instanceof Error
+      ? err.cause.stack
+      : err instanceof Error
+        ? err.stack
+        : undefined;
+  return raw === undefined ? undefined : sanitizeForHealer(raw);
 }
 
 /**
- * Fire-and-forget POST /error to the self-healing service when env is configured.
+ * POST /error to the self-healing service when env is configured.
  * Requires HEALER_REPO_SOURCE and HEALER_REPO_BRANCH (git URL + branch to patch).
+ * Resolves after the HTTP attempt (or no-op); internal failures are logged, not thrown.
  */
-export function reportErrorToHealer(payload: {
+export async function reportErrorToHealer(payload: {
   err: unknown;
   req?: { method: string; path: string };
-  kind?: "http" | "unhandledRejection" | "uncaughtException";
-}): void {
+  kind?: "http" | "unhandledRejection" | "uncaughtException" | "startup";
+}): Promise<void> {
   const source = process.env.HEALER_REPO_SOURCE?.trim();
   const branch = process.env.HEALER_REPO_BRANCH?.trim();
   if (!source || !branch) return;
@@ -135,38 +163,35 @@ export function reportErrorToHealer(payload: {
     },
   };
 
-  void (async () => {
-    try {
-      const url = `${healerBaseUrl()}/error`;
-      const payload = JSON.stringify(body);
-      const oauthConfigured =
-        Boolean(process.env.HEALER_OAUTH_CLIENT_ID?.trim()) &&
-        Boolean(process.env.HEALER_OAUTH_CLIENT_SECRET?.trim());
+  try {
+    const url = `${healerBaseUrl()}/error`;
+    const jsonBody = JSON.stringify(body);
+    const oauthConfigured =
+      Boolean(process.env.HEALER_OAUTH_CLIENT_ID?.trim()) &&
+      Boolean(process.env.HEALER_OAUTH_CLIENT_SECRET?.trim());
 
-      const postOnce = async (): Promise<Response> => {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        const bearer = await getHealerBearerToken();
-        if (bearer) headers.Authorization = `Bearer ${bearer}`;
-        return fetch(url, {
-          method: "POST",
-          headers,
-          body: payload,
-          signal: AbortSignal.timeout(12_000),
-        });
-      };
+    const postOnce = async (): Promise<Response> => {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const bearer = await getHealerBearerToken();
+      if (bearer) headers.Authorization = `Bearer ${bearer}`;
+      return fetch(url, {
+        method: "POST",
+        headers,
+        body: jsonBody,
+        signal: AbortSignal.timeout(12_000),
+      });
+    };
 
-      let res = await postOnce();
-      // Stale JWT or clock skew: server returns 401 — drop cache and obtain a new token once.
-      if (res.status === 401 && oauthConfigured) {
-        clearHealerTokenCache();
-        res = await postOnce();
-      }
-
-      if (!res.ok) {
-        console.error("Healer POST /error failed:", res.status, await res.text());
-      }
-    } catch (e) {
-      console.error("Healer report failed:", e);
+    let res = await postOnce();
+    if (res.status === 401 && oauthConfigured) {
+      clearHealerTokenCache();
+      res = await postOnce();
     }
-  })();
+
+    if (!res.ok) {
+      console.error("Healer POST /error failed:", res.status, await res.text());
+    }
+  } catch (e) {
+    console.error("Healer report failed:", e);
+  }
 }

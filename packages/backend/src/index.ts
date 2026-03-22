@@ -891,6 +891,21 @@ app.post(
   })
 );
 
+function frameworkHttpStatus(err: unknown): number | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const o = err as { status?: unknown; statusCode?: unknown };
+  const v =
+    typeof o.status === "number"
+      ? o.status
+      : typeof o.statusCode === "number"
+        ? o.statusCode
+        : undefined;
+  if (v === undefined || !Number.isFinite(v)) return undefined;
+  const n = Math.trunc(v);
+  if (n < 400 || n > 599) return undefined;
+  return n;
+}
+
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) {
     next(err);
@@ -899,12 +914,22 @@ app.use((err: unknown, req: express.Request, res: express.Response, next: expres
   const logErr = err instanceof Error ? err : new Error(String(err));
   console.error(logErr);
 
-  const status = err instanceof HttpError ? err.statusCode : 500;
+  const frameworkStatus = frameworkHttpStatus(err);
+  const status = err instanceof HttpError ? err.statusCode : (frameworkStatus ?? 500);
+  const expose =
+    typeof err === "object" && err !== null && (err as { expose?: unknown }).expose === true;
+
   const body =
-    err instanceof HttpError ? { error: err.clientMessage } : { error: "Internal server error" };
+    err instanceof HttpError
+      ? { error: err.clientMessage }
+      : status >= 500
+        ? { error: "Internal server error" }
+        : expose
+          ? { error: logErr.message }
+          : { error: "Bad request" };
 
   if (status >= 500) {
-    reportErrorToHealer({
+    void reportErrorToHealer({
       err,
       req: { method: req.method, path: req.path },
       kind: "http",
@@ -914,24 +939,31 @@ app.use((err: unknown, req: express.Request, res: express.Response, next: expres
   res.status(status).json(body);
 });
 
+const HEALER_EXIT_GRACE_MS = 5000;
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+  void reportErrorToHealer({
+    err: reason instanceof Error ? reason : new Error(String(reason)),
+    kind: "unhandledRejection",
+  });
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  void (async () => {
+    try {
+      await Promise.race([
+        reportErrorToHealer({ err: error, kind: "uncaughtException" }),
+        new Promise<void>((resolve) => setTimeout(resolve, HEALER_EXIT_GRACE_MS)),
+      ]);
+    } finally {
+      process.exit(1);
+    }
+  })();
+});
+
 syncAgentConfigPointers()
   .then(() => {
-    process.on("unhandledRejection", (reason) => {
-      console.error("Unhandled rejection:", reason);
-      reportErrorToHealer({
-        err: reason instanceof Error ? reason : new Error(String(reason)),
-        kind: "unhandledRejection",
-      });
-    });
-    process.on("uncaughtException", (error) => {
-      console.error("Uncaught exception:", error);
-      reportErrorToHealer({
-        err: error,
-        kind: "uncaughtException",
-      });
-      process.exit(1);
-    });
-
     const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
     const pollMs = Number.isFinite(pollMsRaw) ? Math.max(5000, Math.floor(pollMsRaw)) : 30000;
     startAwakeScheduler(pollMs);
@@ -942,7 +974,17 @@ syncAgentConfigPointers()
       console.log(`Backend listening on http://localhost:${port}`);
     });
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error("Failed to sync agent config pointers on startup:", err);
-    process.exit(1);
+    try {
+      await Promise.race([
+        reportErrorToHealer({
+          err: err instanceof Error ? err : new Error(String(err)),
+          kind: "startup",
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, HEALER_EXIT_GRACE_MS)),
+      ]);
+    } finally {
+      process.exit(1);
+    }
   });
