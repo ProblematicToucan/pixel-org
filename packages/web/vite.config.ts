@@ -12,8 +12,9 @@ export default defineConfig({
         target: "http://127.0.0.1:3000",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
-        timeout: 0,
-        proxyTimeout: 0,
+        // Idle socket timeouts (ms). SSE `/threads/:id/stream` sends keepalive every 20s — stay under 30s.
+        timeout: 30_000,
+        proxyTimeout: 30_000,
       },
     },
   },
