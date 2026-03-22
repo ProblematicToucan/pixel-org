@@ -28,7 +28,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { and, asc, desc, eq, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
 import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
@@ -61,6 +61,18 @@ function emitThreadMessage(threadId: string, payload: unknown): void {
   for (const res of listeners) {
     res.write(event);
   }
+}
+
+/** PostgreSQL `unique_violation` (e.g. partial unique index); may be nested under Drizzle/pg driver errors. */
+function isPostgresUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if ((current as { code?: string }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 function buildProjectSlug(name: string): string {
@@ -499,28 +511,7 @@ app.post(
         res.status(400).json({ error: "agentId not found" });
         return;
       }
-      const existingKickoff = await db
-        .select()
-        .from(threads)
-        .where(
-          and(
-            eq(threads.projectId, projectId),
-            sql`lower(trim(coalesce(${threads.title}, ''))) = 'board kickoff'`
-          )
-        )
-        .limit(1);
-      if (existingKickoff.length > 0) {
-        res.status(409).json({ error: "Board kickoff thread already exists for this project" });
-        return;
-      }
       const threadId = randomUUID();
-      await db.insert(threads).values({
-        id: threadId,
-        projectId,
-        agentId: ownerId,
-        title: "Board kickoff",
-        status: "in_progress",
-      });
       const messageId = randomUUID();
       const createdAt = new Date();
       const boardContent = `Project goals:\n\n${goalsText}`;
@@ -533,7 +524,24 @@ app.post(
         content: boardContent,
         createdAt,
       };
-      await db.insert(messages).values(inserted);
+      try {
+        await db.transaction(async (tx) => {
+          await tx.insert(threads).values({
+            id: threadId,
+            projectId,
+            agentId: ownerId,
+            title: "Board kickoff",
+            status: "in_progress",
+          });
+          await tx.insert(messages).values(inserted);
+        });
+      } catch (err) {
+        if (isPostgresUniqueViolation(err)) {
+          res.status(409).json({ error: "Board kickoff thread already exists for this project" });
+          return;
+        }
+        throw err;
+      }
       emitThreadMessage(threadId, {
         ...inserted,
         createdAt: createdAt.toISOString(),

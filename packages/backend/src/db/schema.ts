@@ -61,6 +61,10 @@ export const threads = pgTable("threads", {
   threadsSessionIdUnique: uniqueIndex("threads_session_id_unique")
     .on(table.sessionId)
     .where(sql`${table.sessionId} is not null`),
+  /** At most one canonical Board kickoff thread per project (normalized title). */
+  threadsBoardKickoffUnique: uniqueIndex("threads_board_kickoff_unique")
+    .on(table.projectId)
+    .where(sql`lower(trim(coalesce(${table.title}, ''))) = 'board kickoff'`),
 }));
 
 export type Thread = typeof threads.$inferSelect;
