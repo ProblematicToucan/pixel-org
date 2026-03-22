@@ -1,4 +1,5 @@
 import fs from "fs";
+import { stat } from "fs/promises";
 import { eq, inArray } from "drizzle-orm";
 import { agents, projects } from "../db/schema.js";
 import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
@@ -122,22 +123,29 @@ export async function getAgentWorkspacesForProject(
   const allAgents = await db
     .select({ id: agents.id, name: agents.name, role: agents.role })
     .from(agents);
-  const out: ProjectAgentWorkspace[] = [];
 
-  for (const agent of allAgents) {
-    const artifactsPath = getArtifactsDir(agent, projectId);
-    if (fs.existsSync(artifactsPath) && fs.statSync(artifactsPath).isDirectory()) {
-      out.push({
-        agentId: agent.id,
-        name: agent.name,
-        role: agent.role,
-        agentDir: getAgentDir(agent),
-        artifactsPath,
-      });
-    }
-  }
+  const entries = await Promise.all(
+    allAgents.map(async (agent) => {
+      const artifactsPath = getArtifactsDir(agent, projectId);
+      try {
+        const s = await stat(artifactsPath);
+        if (!s.isDirectory()) return null;
+        return {
+          agentId: agent.id,
+          name: agent.name,
+          role: agent.role,
+          agentDir: getAgentDir(agent),
+          artifactsPath,
+        };
+      } catch (err: unknown) {
+        const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+        if (code === "ENOENT") return null;
+        throw err;
+      }
+    })
+  );
 
-  return out;
+  return entries.filter((ws): ws is ProjectAgentWorkspace => ws !== null);
 }
 
 /**

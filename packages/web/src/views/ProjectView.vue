@@ -40,6 +40,9 @@ const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
 const copiedArtifactId = ref<string | null>(null);
 let artifactCopyTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Bumped when `projectId` changes or a new artifacts fetch starts; stale responses are ignored. */
+let artifactsRequestId = 0;
+
 async function copyArtifactPath(agentId: string, path: string) {
   try {
     await navigator.clipboard.writeText(path);
@@ -171,17 +174,24 @@ function agentName(id: string) {
 
 async function loadAgentWorkspaces() {
   if (!projectId.value || artifactsFetched.value) return;
+  const requestId = ++artifactsRequestId;
+  const pid = projectId.value;
   artifactsLoading.value = true;
   artifactsLoadError.value = null;
   artifactsRefreshError.value = null;
   try {
-    agentWorkspaces.value = await api.getProjectAgentWorkspaces(projectId.value);
+    const result = await api.getProjectAgentWorkspaces(pid);
+    if (requestId !== artifactsRequestId) return;
+    agentWorkspaces.value = result;
     artifactsFetched.value = true;
   } catch (e) {
+    if (requestId !== artifactsRequestId) return;
     artifactsLoadError.value = e instanceof Error ? e.message : "Failed to load";
     agentWorkspaces.value = [];
   } finally {
-    artifactsLoading.value = false;
+    if (requestId === artifactsRequestId) {
+      artifactsLoading.value = false;
+    }
   }
 }
 
@@ -192,19 +202,27 @@ function onArtifactsToggle(ev: Event) {
 
 async function refreshArtifacts() {
   if (!projectId.value || artifactsRefreshing.value) return;
+  const requestId = ++artifactsRequestId;
+  const pid = projectId.value;
   artifactsRefreshing.value = true;
   artifactsRefreshError.value = null;
   try {
-    agentWorkspaces.value = await api.getProjectAgentWorkspaces(projectId.value);
+    const result = await api.getProjectAgentWorkspaces(pid);
+    if (requestId !== artifactsRequestId) return;
+    agentWorkspaces.value = result;
     artifactsFetched.value = true;
   } catch (e) {
+    if (requestId !== artifactsRequestId) return;
     artifactsRefreshError.value = e instanceof Error ? e.message : "Failed to refresh";
   } finally {
-    artifactsRefreshing.value = false;
+    if (requestId === artifactsRequestId) {
+      artifactsRefreshing.value = false;
+    }
   }
 }
 
 watch(projectId, () => {
+  artifactsRequestId += 1;
   artifactsFetched.value = false;
   agentWorkspaces.value = [];
   artifactsLoadError.value = null;
