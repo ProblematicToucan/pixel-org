@@ -31,6 +31,7 @@ function fallbackObjectiveForRunReason(reason: string): string {
   }
 }
 
+/** Builds the headless CLI task string; `continuationMode` toggles strict vs optional `pixel_get_context`. */
 function buildOrchestrationAgentTask(params: {
   reason: "kickoff_created" | "scheduled_awake" | "thread_message";
   projectId: string;
@@ -78,6 +79,32 @@ function buildOrchestrationAgentTask(params: {
     "Read project goals and react in the kickoff thread with an actionable leadership response.",
     params.projectGoals ? `Project goals:\n${params.projectGoals}` : "Project goals are currently empty.",
   ].join("\n");
+}
+
+/**
+ * Resolves `threads.session_id`: returns an existing non-empty id, or creates a session and
+ * claims the row with `UPDATE ... WHERE session_id IS NULL` so concurrent workers do not overwrite.
+ */
+async function ensureThreadSessionId(
+  threadId: string,
+  agentDir: string,
+  existing: string | null
+): Promise<string> {
+  if (existing != null && existing !== "") return existing;
+  const newId = await createCliSession({ cwd: agentDir });
+  const claimed = await db
+    .update(threads)
+    .set({ sessionId: newId })
+    .where(and(eq(threads.id, threadId), isNull(threads.sessionId)))
+    .returning();
+  if (claimed.length > 0) return newId;
+  const [row] = await db
+    .select({ sessionId: threads.sessionId })
+    .from(threads)
+    .where(eq(threads.id, threadId))
+    .limit(1);
+  if (row?.sessionId != null && row.sessionId !== "") return row.sessionId;
+  throw new Error("Failed to claim or read thread session_id");
 }
 
 /**
@@ -268,17 +295,15 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
   try {
     const agentDir = getAgentDir({ id: agent.id, role: agent.role });
     const hadStoredSessionId = !!threadRow.sessionId;
-    let sessionId: string | null = threadRow.sessionId;
+    let pendingExisting: string | null = threadRow.sessionId;
 
     let result!: RunAgentResult;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      if (!sessionId) {
-        sessionId = await createCliSession({ cwd: agentDir });
-        await db
-          .update(threads)
-          .set({ sessionId })
-          .where(eq(threads.id, request.threadId));
-      }
+      const sessionId = await ensureThreadSessionId(
+        request.threadId,
+        agentDir,
+        pendingExisting
+      );
 
       const continuationMode =
         hadStoredSessionId && attempt === 1 ? "continuing" : "fresh";
@@ -327,8 +352,10 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         await db
           .update(threads)
           .set({ sessionId: null })
-          .where(eq(threads.id, request.threadId));
-        sessionId = null;
+          .where(
+            and(eq(threads.id, request.threadId), eq(threads.sessionId, sessionId))
+          );
+        pendingExisting = null;
         continue;
       }
       break;

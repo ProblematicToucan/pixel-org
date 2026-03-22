@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, text, boolean, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
@@ -56,7 +57,11 @@ export const threads = pgTable("threads", {
   /** Headless agent CLI session id for resume (one per Pixel thread; provider-specific opaque string). */
   sessionId: text("session_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  threadsSessionIdUnique: uniqueIndex("threads_session_id_unique")
+    .on(table.sessionId)
+    .where(sql`${table.sessionId} is not null`),
+}));
 
 export type Thread = typeof threads.$inferSelect;
 export type NewThread = typeof threads.$inferInsert;
