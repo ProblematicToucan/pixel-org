@@ -1,6 +1,6 @@
 import fs from "fs";
-import { eq } from "drizzle-orm";
-import { agents } from "../db/schema.js";
+import { eq, inArray } from "drizzle-orm";
+import { agents, projects } from "../db/schema.js";
 import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
 
 type Db = typeof import("../db/index.js").db;
@@ -63,7 +63,13 @@ function listProjectIdsForAgent(agent: { id: string; role: string }): string[] {
   return projectIds;
 }
 
-export type VisibleProject = { projectId: string; artifactsPath: string };
+export type LinkedProject = { id: string; name: string; slug: string };
+export type VisibleProject = {
+  projectId: string;
+  artifactsPath: string;
+  /** DB project when folder name matches `projects.id` or `projects.slug`. */
+  linkedProject: LinkedProject | null;
+};
 export type VisibleAgentWork = {
   agentId: string;
   name: string;
@@ -71,6 +77,68 @@ export type VisibleAgentWork = {
   agentDir: string;
   projects: VisibleProject[];
 };
+
+export type ProjectAgentWorkspace = {
+  agentId: string;
+  name: string;
+  role: string;
+  agentDir: string;
+  artifactsPath: string;
+};
+
+/** Map folder name (uuid or slug) → project summary for visible-work enrichment. */
+async function buildProjectLookup(db: Db, folderNames: string[]): Promise<Map<string, LinkedProject>> {
+  const map = new Map<string, LinkedProject>();
+  if (folderNames.length === 0) return map;
+
+  const byId = await db.select().from(projects).where(inArray(projects.id, folderNames));
+  for (const r of byId) {
+    map.set(r.id, { id: r.id, name: r.name, slug: r.slug });
+  }
+
+  const missing = folderNames.filter((n) => !map.has(n));
+  if (missing.length === 0) return map;
+
+  const bySlug = await db.select().from(projects).where(inArray(projects.slug, missing));
+  for (const r of bySlug) {
+    if (!map.has(r.slug)) {
+      map.set(r.slug, { id: r.id, name: r.name, slug: r.slug });
+    }
+  }
+  return map;
+}
+
+/**
+ * Agents that have `{storage}/{agentDir}/{projectId}/artifacts/` on disk for this DB project.
+ * Folder name is the project UUID (or legacy slug folder).
+ */
+export async function getAgentWorkspacesForProject(
+  db: Db,
+  projectId: string
+): Promise<ProjectAgentWorkspace[] | null> {
+  const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!proj) return null;
+
+  const allAgents = await db
+    .select({ id: agents.id, name: agents.name, role: agents.role })
+    .from(agents);
+  const out: ProjectAgentWorkspace[] = [];
+
+  for (const agent of allAgents) {
+    const artifactsPath = getArtifactsDir(agent, projectId);
+    if (fs.existsSync(artifactsPath) && fs.statSync(artifactsPath).isDirectory()) {
+      out.push({
+        agentId: agent.id,
+        name: agent.name,
+        role: agent.role,
+        agentDir: getAgentDir(agent),
+        artifactsPath,
+      });
+    }
+  }
+
+  return out;
+}
 
 /**
  * Work the given agent can "see": self + all reports' agent dirs and artifact paths.
@@ -83,9 +151,10 @@ export async function getVisibleWork(db: Db, agentId: string): Promise<VisibleAg
   for (const agent of agentsList) {
     const agentDir = getAgentDir(agent);
     const projectIds = listProjectIdsForAgent(agent);
-    const projects: VisibleProject[] = projectIds.map((projectId) => ({
-      projectId,
-      artifactsPath: getArtifactsDir(agent, projectId),
+    const agentProjects: VisibleProject[] = projectIds.map((pid) => ({
+      projectId: pid,
+      artifactsPath: getArtifactsDir(agent, pid),
+      linkedProject: null,
     }));
 
     out.push({
@@ -93,8 +162,17 @@ export async function getVisibleWork(db: Db, agentId: string): Promise<VisibleAg
       name: agent.name,
       role: agent.role,
       agentDir,
-      projects,
+      projects: agentProjects,
     });
+  }
+
+  const allFolderNames = [...new Set(out.flatMap((w) => w.projects.map((p) => p.projectId)))];
+  const lookup = await buildProjectLookup(db, allFolderNames);
+  for (const w of out) {
+    w.projects = w.projects.map((p) => ({
+      ...p,
+      linkedProject: lookup.get(p.projectId) ?? null,
+    }));
   }
 
   return out;

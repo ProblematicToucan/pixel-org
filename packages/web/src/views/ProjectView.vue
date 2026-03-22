@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
-import { api, type Project, type Agent, type ThreadStatus } from "../api";
+import {
+  api,
+  type Project,
+  type Agent,
+  type ThreadStatus,
+  type ProjectAgentWorkspace,
+} from "../api";
 import { THREAD_STATUS_OPTIONS, normalizeThreadStatus } from "../threadStatus";
 
 const route = useRoute();
@@ -21,6 +27,12 @@ const goalsNotice = ref<string | null>(null);
 const statusFilter = ref<"" | ThreadStatus>("");
 const newThreadStatus = ref<ThreadStatus>("not_started");
 const statusUpdating = ref<Record<string, boolean>>({});
+const agentWorkspaces = ref<ProjectAgentWorkspace[]>([]);
+const artifactsLoading = ref(false);
+const artifactsLoadError = ref<string | null>(null);
+/** True after a successful fetch for the current project (while section is open). */
+const artifactsFetched = ref(false);
+const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
 
 function getBoardAgentId() {
   const lead = agents.value.find((agent) => agent.isLead);
@@ -138,6 +150,42 @@ function agentName(id: string) {
   return agents.value.find((a) => a.id === id)?.name ?? id;
 }
 
+async function loadAgentWorkspaces() {
+  if (!projectId.value || artifactsFetched.value) return;
+  artifactsLoading.value = true;
+  artifactsLoadError.value = null;
+  try {
+    agentWorkspaces.value = await api.getProjectAgentWorkspaces(projectId.value);
+    artifactsFetched.value = true;
+  } catch (e) {
+    artifactsLoadError.value = e instanceof Error ? e.message : "Failed to load";
+    agentWorkspaces.value = [];
+  } finally {
+    artifactsLoading.value = false;
+  }
+}
+
+function onArtifactsToggle(ev: Event) {
+  const el = ev.target as HTMLDetailsElement;
+  if (el.open) void loadAgentWorkspaces();
+}
+
+async function refreshArtifacts() {
+  artifactsFetched.value = false;
+  agentWorkspaces.value = [];
+  artifactsLoadError.value = null;
+  await loadAgentWorkspaces();
+}
+
+watch(projectId, () => {
+  artifactsFetched.value = false;
+  agentWorkspaces.value = [];
+  artifactsLoadError.value = null;
+  if (artifactsPanelRef.value?.open) {
+    void loadAgentWorkspaces();
+  }
+});
+
 async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
   const current = threads.value.find((t) => t.id === threadId);
   const prev = current ? normalizeThreadStatus(current.status) : null;
@@ -198,6 +246,43 @@ onMounted(load);
           <p v-if="goalsNotice" class="goals-notice">{{ goalsNotice }}</p>
         </div>
       </section>
+
+      <details ref="artifactsPanelRef" class="artifacts-panel" @toggle="onArtifactsToggle">
+        <summary class="artifacts-summary">
+          <span class="artifacts-summary-title">Artifacts</span>
+          <span class="artifacts-summary-hint">Agent workspaces on disk (loaded when you open this section)</span>
+        </summary>
+        <div class="artifacts-panel-body">
+          <p v-if="artifactsLoading" class="state">Loading workspaces…</p>
+          <p v-else-if="artifactsLoadError" class="state error">{{ artifactsLoadError }}</p>
+          <template v-else-if="artifactsFetched">
+            <p class="meta board-hint artifacts-intro">
+              Folder name matches project id. Paths are under your agents storage root.
+            </p>
+            <ul v-if="agentWorkspaces.length" class="workspace-list">
+              <li v-for="ws in agentWorkspaces" :key="ws.agentId" class="workspace-item">
+                <div class="workspace-head">
+                  <strong>{{ ws.name }}</strong>
+                  <span class="role">{{ ws.role }}</span>
+                </div>
+                <code class="workspace-path">{{ ws.artifactsPath }}</code>
+              </li>
+            </ul>
+            <p v-else class="empty">No agent artifact folders yet. When an agent runs on this project, outputs go under this path.</p>
+            <button
+              type="button"
+              class="btn btn-secondary artifacts-refresh"
+              :disabled="artifactsLoading"
+              @click="refreshArtifacts"
+            >
+              Refresh list
+            </button>
+          </template>
+          <p v-else class="meta board-hint artifacts-placeholder">
+            Open this section to load workspace paths.
+          </p>
+        </div>
+      </details>
 
       <section class="create-thread">
         <h2>New thread</h2>
@@ -325,6 +410,93 @@ h1 {
   margin: 0 0 0.5rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+.artifacts-panel {
+  margin-top: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.artifacts-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+.artifacts-summary::-webkit-details-marker {
+  display: none;
+}
+.artifacts-summary::before {
+  content: "";
+  display: inline-block;
+  width: 0.35em;
+  height: 0.35em;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  margin-right: 0.5rem;
+  transition: transform 0.15s;
+  vertical-align: middle;
+}
+.artifacts-panel[open] .artifacts-summary::before {
+  transform: rotate(45deg);
+}
+.artifacts-summary-title {
+  font-size: 1rem;
+}
+.artifacts-summary-hint {
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.artifacts-panel-body {
+  padding: 0 1rem 1rem;
+  border-top: 1px solid var(--border);
+}
+.artifacts-intro {
+  margin-top: 0.75rem;
+}
+.artifacts-placeholder {
+  margin: 0.75rem 0 0;
+}
+.artifacts-refresh {
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+}
+.workspace-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+.workspace-item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.workspace-item:last-child {
+  border-bottom: none;
+}
+.workspace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.workspace-head .role {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.workspace-path {
+  display: block;
+  font-size: 0.8rem;
+  word-break: break-all;
+  color: var(--muted);
 }
 .create-thread, .threads {
   margin-top: 1.5rem;

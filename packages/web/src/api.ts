@@ -108,8 +108,23 @@ export interface ActiveAgentRun extends AgentRunRequest {
   threadTitle: string | null;
 }
 
+export interface LinkedProject {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface VisibleProject {
   projectId: string;
+  artifactsPath: string;
+  linkedProject: LinkedProject | null;
+}
+
+export interface ProjectAgentWorkspace {
+  agentId: string;
+  name: string;
+  role: string;
+  agentDir: string;
   artifactsPath: string;
 }
 
@@ -146,6 +161,10 @@ export const api = {
   getProjects: () => fetchApi<Project[]>("/projects"),
   getProject: (id: string) =>
     fetchApi<Project>("/projects/" + encodeURIComponent(id)),
+  getProjectAgentWorkspaces: (id: string) =>
+    fetchApi<ProjectAgentWorkspace[]>(
+      "/projects/" + encodeURIComponent(id) + "/agent-workspaces"
+    ),
   createProject: (body: { name: string }) =>
     fetchApi<{ success: boolean; name: string; slug: string }>("/projects", {
       method: "POST",

@@ -80,7 +80,25 @@ onMounted(load);
             <strong>{{ w.name }}</strong> ({{ w.role }}) — {{ w.projects.length }} project(s)
             <ul v-if="w.projects.length" class="projects">
               <li v-for="p in w.projects" :key="p.projectId">
-                <code>{{ p.projectId }}</code> → <code>{{ p.artifactsPath }}</code>
+                <div class="project-line">
+                  <template v-if="p.linkedProject">
+                    <router-link
+                      :to="{ name: 'project', params: { id: p.linkedProject.id } }"
+                      class="project-link"
+                    >
+                      {{ p.linkedProject.name }}
+                    </router-link>
+                    <span class="meta">
+                      <code>{{ p.linkedProject.slug }}</code>
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span class="unlinked-label">Folder</span>
+                    <code>{{ p.projectId }}</code>
+                    <span class="meta unlinked-hint">(no matching DB project)</span>
+                  </template>
+                </div>
+                <div class="artifacts-path">{{ p.artifactsPath }}</div>
               </li>
             </ul>
           </li>
@@ -208,6 +226,37 @@ h1 {
   color: var(--muted);
 }
 .projects code {
+  word-break: break-all;
+}
+.project-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.project-link {
+  font-weight: 600;
+  color: var(--accent, #0a7ea4);
+  text-decoration: none;
+}
+.project-link:hover {
+  text-decoration: underline;
+}
+.project-line .meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.unlinked-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.unlinked-hint {
+  font-style: italic;
+}
+.artifacts-path {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
   word-break: break-all;
 }
 </style>

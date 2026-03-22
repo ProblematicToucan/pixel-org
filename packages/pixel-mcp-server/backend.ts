@@ -66,7 +66,12 @@ async function patch<T>(path: string, body: object): Promise<T> {
   return {} as T;
 }
 
-export type VisibleProject = { projectId: string; artifactsPath: string };
+export type LinkedProject = { id: string; name: string; slug: string };
+export type VisibleProject = {
+  projectId: string;
+  artifactsPath: string;
+  linkedProject: LinkedProject | null;
+};
 export type VisibleAgentWork = {
   agentId: string;
   name: string;

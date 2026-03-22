@@ -12,6 +12,7 @@
  */
 
 export type {
+  LinkedProject,
   RunAgentOptions,
   RunAgentResult,
   VisibleAgentWork,
