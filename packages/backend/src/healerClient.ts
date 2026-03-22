@@ -97,19 +97,38 @@ async function getHealerBearerToken(): Promise<string | undefined> {
 const REDACTED = "[REDACTED]";
 const MAX_HEALER_CHARS = 12_000;
 
+/** Redacts directory prefixes from absolute POSIX paths; keeps basename and :line:col. */
+function redactUnixPathSegments(s: string): string {
+  return s.replace(
+    /(?<![:/])(\/(?:[^/\s]+\/)+)([^/\s]+)(:\d+:\d+)?/g,
+    `${REDACTED}/$2$3`,
+  );
+}
+
+/** Redacts parent path on Windows; keeps filename and :line:col. */
+function redactWindowsPathSegments(s: string): string {
+  return s.replace(
+    /([A-Za-z]:\\(?:[^\\/\s]+\\)+)([^\\/\s]+)(:\d+:\d+)?/g,
+    `${REDACTED}\\$2$3`,
+  );
+}
+
 /** Redacts likely secrets, paths, and PII before sending error text off-box. */
 export function sanitizeForHealer(s: string): string {
-  let out = s.length > MAX_HEALER_CHARS ? `${s.slice(0, MAX_HEALER_CHARS)}…` : s;
+  let out = s;
   out = out.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED);
   out = out.replace(/\bBearer\s+[A-Za-z0-9._~-]+\b/gi, `Bearer ${REDACTED}`);
   out = out.replace(
     /([?&])(key|token|secret|password|api_?key|access_?token)=[^&\s]+/gi,
     `$1$2=${REDACTED}`,
   );
-  out = out.replace(/(?:\/[^\s:'"<>|*?]+){2,}/g, REDACTED);
-  out = out.replace(/[A-Za-z]:\\[^\s:'"]+/g, REDACTED);
+  out = redactUnixPathSegments(out);
+  out = redactWindowsPathSegments(out);
   out = out.replace(/\b[0-9a-fA-F]{40,}\b/g, REDACTED);
   out = out.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, REDACTED);
+  if (out.length > MAX_HEALER_CHARS) {
+    out = `${out.slice(0, MAX_HEALER_CHARS)}…`;
+  }
   return out;
 }
 

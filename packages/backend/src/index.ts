@@ -26,12 +26,16 @@ import {
 } from "./storage/index.js";
 import { and, asc, desc, eq, or } from "drizzle-orm";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
 import { HttpError } from "./httpError.js";
 import { reportErrorToHealer } from "./healerClient.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+
+/** Set when `app.listen` runs; closed on uncaughtException before healer grace period. */
+let httpServer: Server | undefined;
 
 app.use(cors());
 app.use(express.json());
@@ -950,6 +954,9 @@ process.on("unhandledRejection", (reason) => {
 });
 process.on("uncaughtException", (error) => {
   console.error("Uncaught exception:", error);
+  if (httpServer) {
+    httpServer.close();
+  }
   void (async () => {
     try {
       await Promise.race([
@@ -970,7 +977,7 @@ syncAgentConfigPointers()
     void runAwakeCycle().catch((err) => {
       console.error("Initial awake cycle failed:", err);
     });
-    app.listen(port, () => {
+    httpServer = app.listen(port, () => {
       console.log(`Backend listening on http://localhost:${port}`);
     });
   })
