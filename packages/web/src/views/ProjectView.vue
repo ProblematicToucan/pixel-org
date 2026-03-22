@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   api,
@@ -34,6 +34,21 @@ const artifactsLoadError = ref<string | null>(null);
 /** True after a successful fetch for the current project (while section is open). */
 const artifactsFetched = ref(false);
 const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
+const copiedArtifactId = ref<string | null>(null);
+let artifactCopyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyArtifactPath(agentId: string, path: string) {
+  try {
+    await navigator.clipboard.writeText(path);
+    copiedArtifactId.value = agentId;
+    if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
+    artifactCopyTimer = setTimeout(() => {
+      copiedArtifactId.value = null;
+    }, 1600);
+  } catch {
+    // clipboard unavailable
+  }
+}
 
 function getBoardAgentId() {
   const lead = agents.value.find((agent) => agent.isLead);
@@ -204,6 +219,10 @@ async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
 }
 
 onMounted(load);
+
+onUnmounted(() => {
+  if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
+});
 </script>
 
 <template>
@@ -250,38 +269,48 @@ onMounted(load);
 
       <details ref="artifactsPanelRef" class="artifacts-panel" @toggle="onArtifactsToggle">
         <summary class="artifacts-summary">
-          <span class="artifacts-summary-title">Artifacts</span>
-          <span class="artifacts-summary-hint">Agent workspaces on disk (loaded when you open this section)</span>
+          <span class="artifacts-summary-main">
+            <span class="artifacts-summary-title">Artifacts</span>
+            <span class="artifacts-summary-hint">Agents with outputs for this project</span>
+          </span>
+          <span class="artifacts-chevron" aria-hidden="true" />
         </summary>
         <div class="artifacts-panel-body">
-          <p v-if="artifactsLoading" class="state">Loading workspaces…</p>
-          <p v-else-if="artifactsLoadError" class="state error">{{ artifactsLoadError }}</p>
+          <div v-if="artifactsLoading" class="artifacts-state">
+            <span class="artifacts-spinner" aria-hidden="true" />
+            Loading…
+          </div>
+          <p v-else-if="artifactsLoadError" class="artifacts-state artifacts-state-error">{{ artifactsLoadError }}</p>
           <template v-else-if="artifactsFetched">
-            <p class="meta board-hint artifacts-intro">
-              Folder name matches project id. Paths are under your agents storage root.
-            </p>
             <ul v-if="agentWorkspaces.length" class="workspace-list">
-              <li v-for="ws in agentWorkspaces" :key="ws.agentId" class="workspace-item">
-                <div class="workspace-head">
-                  <strong>{{ ws.name }}</strong>
-                  <span class="role">{{ ws.role }}</span>
+              <li v-for="ws in agentWorkspaces" :key="ws.agentId" class="workspace-card">
+                <div class="workspace-card-main">
+                  <span class="workspace-name">{{ ws.name }}</span>
+                  <span class="workspace-role">{{ ws.role }}</span>
                 </div>
-                <code class="workspace-path">{{ ws.artifactsPath }}</code>
+                <button
+                  type="button"
+                  class="workspace-copy"
+                  :title="'Copy artifact path: ' + ws.artifactsPath"
+                  @click="copyArtifactPath(ws.agentId, ws.artifactsPath)"
+                >
+                  {{ copiedArtifactId === ws.agentId ? "Copied" : "Copy path" }}
+                </button>
               </li>
             </ul>
-            <p v-else class="empty">No agent artifact folders yet. When an agent runs on this project, outputs go under this path.</p>
-            <button
-              type="button"
-              class="btn btn-secondary artifacts-refresh"
-              :disabled="artifactsLoading"
-              @click="refreshArtifacts"
-            >
-              Refresh list
-            </button>
+            <p v-else class="artifacts-empty">No agents with artifacts yet. Runs on this project create folders per agent.</p>
+            <div class="artifacts-footer">
+              <button
+                type="button"
+                class="artifacts-refresh"
+                :disabled="artifactsLoading"
+                @click="refreshArtifacts"
+              >
+                Refresh
+              </button>
+            </div>
           </template>
-          <p v-else class="meta board-hint artifacts-placeholder">
-            Open this section to load workspace paths.
-          </p>
+          <p v-else class="artifacts-placeholder">Expand to load the list.</p>
         </div>
       </details>
 
@@ -415,89 +444,187 @@ h1 {
 .artifacts-panel {
   margin-top: 1.5rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--surface);
+  overflow: hidden;
 }
 .artifacts-summary {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 1rem;
-  padding: 0.75rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
   cursor: pointer;
-  font-weight: 600;
   list-style: none;
+  user-select: none;
+  transition: background 0.12s ease;
+}
+.artifacts-summary:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .artifacts-summary::-webkit-details-marker {
   display: none;
 }
-.artifacts-summary::before {
-  content: "";
-  display: inline-block;
-  width: 0.35em;
-  height: 0.35em;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
-  transform: rotate(-45deg);
-  margin-right: 0.5rem;
-  transition: transform 0.15s;
-  vertical-align: middle;
-}
-.artifacts-panel[open] .artifacts-summary::before {
-  transform: rotate(45deg);
+.artifacts-summary-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  min-width: 0;
 }
 .artifacts-summary-title {
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
 }
 .artifacts-summary-hint {
   font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.artifacts-chevron {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  position: relative;
+}
+.artifacts-chevron::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: translate(-50%, -50%) rotate(45deg);
+  transition: transform 0.18s ease;
+}
+.artifacts-panel[open] .artifacts-chevron::after {
+  transform: translate(-50%, -35%) rotate(-135deg);
+}
+.artifacts-panel-body {
+  padding: 0 1.1rem 1.1rem;
+  border-top: 1px solid var(--border);
+}
+.artifacts-placeholder,
+.artifacts-empty {
+  margin: 0.85rem 0 0;
   font-size: 0.85rem;
   color: var(--muted);
 }
-.artifacts-panel-body {
-  padding: 0 1rem 1rem;
+.artifacts-state {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.artifacts-state-error {
+  color: var(--error);
+}
+.artifacts-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: artifacts-spin 0.65s linear infinite;
+}
+@keyframes artifacts-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.artifacts-footer {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
   border-top: 1px solid var(--border);
-}
-.artifacts-intro {
-  margin-top: 0.75rem;
-}
-.artifacts-placeholder {
-  margin: 0.75rem 0 0;
+  display: flex;
+  justify-content: flex-end;
 }
 .artifacts-refresh {
-  margin-top: 0.75rem;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.artifacts-refresh:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.artifacts-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .workspace-list {
   list-style: none;
   padding: 0;
-  margin: 0.5rem 0 0;
+  margin: 0.65rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
-.workspace-item {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.9rem;
-}
-.workspace-item:last-child {
-  border-bottom: none;
-}
-.workspace-head {
+.workspace-card {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: var(--bg);
 }
-.workspace-head .role {
-  color: var(--muted);
-  font-size: 0.85rem;
+.workspace-card-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.65rem;
+  min-width: 0;
+  flex: 1;
 }
-.workspace-path {
-  display: block;
-  font-size: 0.8rem;
-  word-break: break-all;
+.workspace-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.workspace-role {
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--muted);
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+.workspace-copy {
+  flex-shrink: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.workspace-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .create-thread, .threads {
   margin-top: 1.5rem;
