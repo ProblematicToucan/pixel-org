@@ -14,7 +14,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 - **Before/during work:** Read projects, threads, messages (treat as user requests/tickets), and project goals.
 - **When starting work:** Create or attach to a thread (`pixel_create_thread`; use `ownerAgentId` to assign a report if you are a lead); post a "Started: …" message.
 - **When finishing work:** Post "Completed: …" or "Blocked: …" to the thread.
-- **If you are a lead:** Use `pixel_get_visible_work` to see reports' artifact paths and review their work.
+- **If you are a lead:** Use `pixel_get_visible_work` to see reports' per-project workspace paths and review their work.
 - **Before hiring or when you need the org chart:** Call `pixel_list_agents` so you know who already exists (avoids blind duplicate hires).
 
 ## Tools (Pixel MCP)
@@ -34,7 +34,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_list_approval_requests` | List approvals **as approver** (inbox) or **as requester**; optional `status` (e.g. `pending`). |
 | `pixel_resolve_approval_request` | (Assigned approver only) Approve or reject; posts audit line on source thread and notifies requester. |
 | `pixel_cancel_approval_request` | (Requester) Cancel a pending approval. Omit from the server by setting **`PIXEL_ENABLE_CANCEL_APPROVAL=false`** on the MCP process. |
-| `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |
+| `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' per-project workspace paths. |
 | `pixel_hire_agent` | (Leads) Hire/create a new child agent under yourself (`name`, `role`, optional `config`, optional full `agentsMd`, optional **`idempotencyKey`**). Reusing the same key for the same hire intent returns the existing agent (safe retries; no duplicate row). |
 | `pixel_get_context` | **Start of task:** one block with agent info, optional project goals, optional visible-work paths, and **Mem0 OSS** semantic memory (if `OPENAI_API_KEY` is set). Keeps long-term goals and facts. |
 | `pixel_store_memory` | Store a **concise** long-term memory in Mem0 (decision, insight, preference, fact). Scoped by agent and optional `projectId`. Do not paste full transcripts. |

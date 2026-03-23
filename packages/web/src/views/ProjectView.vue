@@ -315,8 +315,8 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="workspace-copy"
-                  :title="'Copy artifact path: ' + ws.artifactsPath"
-                  @click="copyArtifactPath(ws.agentId, ws.artifactsPath)"
+                  :title="'Copy project path: ' + ws.projectPath"
+                  @click="copyArtifactPath(ws.agentId, ws.projectPath)"
                 >
                   {{ copiedArtifactId === ws.agentId ? "Copied" : "Copy path" }}
                 </button>

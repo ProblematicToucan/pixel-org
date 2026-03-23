@@ -39,7 +39,7 @@ export function createServer(): McpServer {
     "pixel_get_visible_work",
     {
       description:
-        "Get work this agent can see: self + all reports (artifact paths). Use when you are a lead reviewing reports' work.",
+        "Get work this agent can see: self + all reports (per-project workspace paths under each agent dir). Use when you are a lead reviewing reports' work.",
       inputSchema: {},
     },
     async (): Promise<CallToolResult> => {
@@ -612,7 +612,7 @@ export function createServer(): McpServer {
         includeVisibleWork: z
           .boolean()
           .optional()
-          .describe("If true, include JSON of visible artifact paths (can be large; for leads)"),
+          .describe("If true, include JSON of visible project paths (can be large; for leads)"),
       }),
     },
     async (args: {
