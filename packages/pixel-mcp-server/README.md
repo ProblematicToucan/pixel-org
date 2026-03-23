@@ -17,7 +17,8 @@ Set these in the agent’s `./.cursor/mcp.json` (or `./.claude/mcp.json`, or via
 | Tool | Description |
 |------|-------------|
 | `pixel_get_visible_work` | Work this agent can see (self + reports’ artifact paths). |
-| `pixel_hire_agent` | **Lead-only** hire/create a new child agent under the current lead (`name`, `role`, optional `config`, optional full `agentsMd`). |
+| `pixel_hire_agent` | **Lead-only** hire/create a new child agent under the current lead (`name`, `role`, optional `config`, optional full `agentsMd`, optional `idempotencyKey` for safe retries). |
+| `pixel_list_agents` | List all organization agents (roster). |
 | `pixel_list_projects` | List all projects. |
 | `pixel_create_project` | Create a project (`name`); slug is auto-generated and read-only. |
 | `pixel_list_threads` | List threads in a project (`projectId`, optional `status` filter). |

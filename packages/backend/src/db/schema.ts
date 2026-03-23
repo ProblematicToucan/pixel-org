@@ -8,21 +8,35 @@ const uuid = () => text("id").primaryKey().$defaultFn(() => randomUUID());
 /**
  * Agents = participants (like users). Can be recruited, registered, and interact in projects/threads.
  */
-export const agents = pgTable("agents", {
-  id: uuid(),
-  name: text("name").notNull(),
-  type: text("type").notNull(),
-  role: text("role").notNull(),
-  isLead: boolean("is_lead").default(false),
-  parentId: text("parent_id").references((): any => agents.id),
-  config: text("config"),
-  awakeEnabled: boolean("awake_enabled").default(true).notNull(),
-  awakeIntervalMinutes: integer("awake_interval_minutes").default(30).notNull(),
-  lastAwakeAt: timestamp("last_awake_at", { withTimezone: true }),
-  nextAwakeAt: timestamp("next_awake_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const agents = pgTable(
+  "agents",
+  {
+    id: uuid(),
+    name: text("name").notNull(),
+    type: text("type").notNull(),
+    role: text("role").notNull(),
+    isLead: boolean("is_lead").default(false),
+    parentId: text("parent_id").references((): any => agents.id),
+    config: text("config"),
+    /**
+     * When set (on hire), dedupes retries: same hiring parent + same key returns the existing agent.
+     * Omitted from JSON responses (see enrichAgentForResponse).
+     */
+    hireIdempotencyKey: text("hire_idempotency_key"),
+    awakeEnabled: boolean("awake_enabled").default(true).notNull(),
+    awakeIntervalMinutes: integer("awake_interval_minutes").default(30).notNull(),
+    lastAwakeAt: timestamp("last_awake_at", { withTimezone: true }),
+    nextAwakeAt: timestamp("next_awake_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    /** One hire per (parent, idempotency key) when key is set — prevents double-submit / retry duplicates. */
+    agentsParentHireIdempotencyUnique: uniqueIndex("agents_parent_hire_idempotency_unique")
+      .on(table.parentId, table.hireIdempotencyKey)
+      .where(sql`${table.hireIdempotencyKey} is not null`),
+  })
+);
 
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
