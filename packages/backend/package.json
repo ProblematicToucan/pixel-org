@@ -11,7 +11,7 @@
     "db:migrate": "tsx src/migrate.ts",
     "db:studio": "drizzle-kit studio --config drizzle.config.cjs",
     "db:seed": "tsx src/seed.ts",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "tsx --test src/services/orchestration-contract.test.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.1",

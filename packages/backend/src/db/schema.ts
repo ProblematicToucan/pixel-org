@@ -94,6 +94,10 @@ export const messages = pgTable("messages", {
   actorType: text("actor_type").notNull().default("agent"),
   actorName: text("actor_name"),
   content: text("content").notNull(),
+  /** Optional run id (agent_run_requests.id) for structured orchestration event tracking. */
+  runId: text("run_id"),
+  /** Optional run-level status token captured from MCP structured payload. */
+  runStatus: text("run_status").$type<"started" | "in_progress" | "completed" | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

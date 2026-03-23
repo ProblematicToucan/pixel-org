@@ -206,10 +206,19 @@ export async function listMessages(threadId: string): Promise<
   return get(`/threads/${encodeURIComponent(threadId)}/messages`);
 }
 
-export async function postMessage(threadId: string, content: string): Promise<{ success: boolean }> {
+export async function postMessage(
+  threadId: string,
+  content: string,
+  options?: {
+    runId?: string | null;
+    runStatus?: "started" | "in_progress" | "completed" | null;
+  }
+): Promise<{ success: boolean }> {
   return post(`/threads/${encodeURIComponent(threadId)}/messages`, {
     agentId: agentId(),
     content,
+    runId: options?.runId ?? null,
+    runStatus: options?.runStatus ?? null,
   });
 }
 

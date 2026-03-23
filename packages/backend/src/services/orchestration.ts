@@ -4,6 +4,10 @@ import { createCliSession, runAgent } from "@pixel-org/agent-runner";
 import type { RunAgentResult } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests, approvalRequests } from "../db/index.js";
 import { ensureAgentProjectLayout, provisionAgentWorkspace } from "../storage/index.js";
+import {
+  evaluateRunDeliveryContract,
+  normalizeDeliveryContractReason,
+} from "./orchestration-contract.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
@@ -29,30 +33,6 @@ function fallbackObjectiveForRunReason(reason: string): string {
   }
 }
 
-type DeliveryContractFailureReason = "missing_agent_thread_update" | "missing_terminal_status_update";
-
-function parseStatusToken(content: string): string | null {
-  const line = content
-    .split("\n")
-    .map((s) => s.trim())
-    .find((s) => s.toLowerCase().startsWith("status:"));
-  if (!line) return null;
-  const value = line.slice("status:".length).trim().toLowerCase();
-  return value || null;
-}
-
-function isStartedStatusToken(status: string | null): boolean {
-  return status === "started";
-}
-
-function isTerminalStatusToken(status: string | null): boolean {
-  return status === "completed";
-}
-
-function normalizeDeliveryContractReason(reason: DeliveryContractFailureReason): string {
-  return `contract_failure:${reason}`;
-}
-
 function hasContractRetryMarker(idempotencyKey: string | null | undefined): boolean {
   return (idempotencyKey ?? "").includes(":contract-retry:1");
 }
@@ -63,36 +43,6 @@ function isDeliveryContractFailure(error: string | null | undefined): boolean {
     value.includes("contract_failure:missing_agent_thread_update") ||
     value.includes("contract_failure:missing_terminal_status_update")
   );
-}
-
-function evaluateRunDeliveryContract(params: {
-  threadMessages: Array<typeof messages.$inferSelect>;
-  ownerAgentId: string;
-  runStartedAt: Date | null;
-  requireTerminalStatus: boolean;
-}): { passed: true } | { passed: false; reason: DeliveryContractFailureReason } {
-  const startedAtMs = params.runStartedAt ? new Date(params.runStartedAt).getTime() : 0;
-  const ownerUpdates = params.threadMessages.filter((m) => {
-    if (m.actorType !== "agent" || m.agentId !== params.ownerAgentId) return false;
-    if (new Date(m.createdAt).getTime() < startedAtMs) return false;
-    const status = parseStatusToken(m.content);
-    // Ignore orchestration informational start markers.
-    if (isStartedStatusToken(status)) return false;
-    return true;
-  });
-
-  if (ownerUpdates.length === 0) {
-    return { passed: false, reason: "missing_agent_thread_update" };
-  }
-
-  if (params.requireTerminalStatus) {
-    const hasTerminal = ownerUpdates.some((m) => isTerminalStatusToken(parseStatusToken(m.content)));
-    if (!hasTerminal) {
-      return { passed: false, reason: "missing_terminal_status_update" };
-    }
-  }
-
-  return { passed: true };
 }
 
 async function shouldThrottleAutomatedRunForContractFailure(params: {
@@ -571,6 +521,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     agentId: agent.id,
     actorType: "agent",
     actorName: agent.name,
+    runId: request.id,
+    runStatus: "started",
     content: [
       "Status: Started",
       `Objective: ${fallbackObjectiveForRunReason(request.reason)} for project ${request.projectId}`,
@@ -620,6 +572,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         resumeSessionId: sessionId,
         env: {
           PIXEL_RUN_REASON: request.reason,
+          PIXEL_RUN_REQUEST_ID: request.id,
+          PIXEL_ORCHESTRATED_RUN: "1",
           PIXEL_PROJECT_ID: request.projectId,
           PIXEL_PROJECT_WORKSPACE: projectDir,
           PIXEL_PROJECT_ARTIFACTS: artifactsDir,
@@ -662,9 +616,15 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     const msgsAfterRun = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
     const contractResult = result.success
       ? evaluateRunDeliveryContract({
-          threadMessages: msgsAfterRun,
+          runId: request.id,
+          runEvents: msgsAfterRun.map((m) => ({
+            runId: m.runId ?? null,
+            runStatus: (m.runStatus as "started" | "in_progress" | "completed" | null) ?? null,
+            actorType: m.actorType as "agent" | "board",
+            agentId: m.agentId ?? null,
+            createdAt: m.createdAt,
+          })),
           ownerAgentId: agent.id,
-          runStartedAt: request.startedAt ?? null,
           requireTerminalStatus: true,
         })
       : { passed: true as const };

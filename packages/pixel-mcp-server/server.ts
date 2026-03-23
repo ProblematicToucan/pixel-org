@@ -453,6 +453,9 @@ export function createServer(): McpServer {
       const threadId = args?.threadId ?? "";
       const rawContent = typeof args?.content === "string" ? args.content : "";
       const structuredStatus = args?.status;
+      const runIdRaw = process.env.PIXEL_RUN_REQUEST_ID?.trim() ?? "";
+      const isOrchestratedRun = process.env.PIXEL_ORCHESTRATED_RUN === "1" || runIdRaw !== "";
+      const runId = runIdRaw || null;
       const content =
         structuredStatus == null
           ? rawContent
@@ -467,6 +470,17 @@ export function createServer(): McpServer {
             ]
               .filter((line): line is string => Boolean(line && line.trim()))
               .join("\n");
+      if (isOrchestratedRun && structuredStatus == null) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: orchestrated runs must send structured status (started, in_progress, completed) via pixel_post_message",
+            },
+          ],
+          isError: true,
+        };
+      }
       if (!threadId || !content.trim()) {
         return {
           content: [{ type: "text", text: "Error: threadId and either content or structured status payload are required" }],
@@ -474,7 +488,10 @@ export function createServer(): McpServer {
         };
       }
       try {
-        await backend.postMessage(threadId, String(content).trim());
+        await backend.postMessage(threadId, String(content).trim(), {
+          runId,
+          runStatus: structuredStatus ?? null,
+        });
         return { content: [{ type: "text", text: "Message posted." }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

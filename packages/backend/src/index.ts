@@ -1122,7 +1122,15 @@ app.post(
   asyncHandler(async (req, res) => {
     try {
     const threadId = routeParam(req, "id");
-    const { agentId, content, actorType, actorName } = req.body;
+    const { agentId, content, actorType, actorName, runId, runStatus } = req.body;
+    const normalizedRunId = typeof runId === "string" ? runId.trim() : "";
+    const normalizedRunStatusRaw = typeof runStatus === "string" ? runStatus.trim().toLowerCase() : "";
+    const normalizedRunStatus =
+      normalizedRunStatusRaw === "started" ||
+      normalizedRunStatusRaw === "in_progress" ||
+      normalizedRunStatusRaw === "completed"
+        ? (normalizedRunStatusRaw as "started" | "in_progress" | "completed")
+        : null;
     let normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
     let normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
     let normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
@@ -1132,6 +1140,18 @@ app.post(
     }
     if (normalizedActorType !== "agent" && normalizedActorType !== "board") {
       res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
+      return;
+    }
+    if (runStatus !== undefined && normalizedRunStatus == null) {
+      res.status(400).json({ error: "runStatus must be started, in_progress, or completed" });
+      return;
+    }
+    if (runId !== undefined && !normalizedRunId) {
+      res.status(400).json({ error: "runId must be non-empty when provided" });
+      return;
+    }
+    if (normalizedRunStatus != null && !normalizedRunId) {
+      res.status(400).json({ error: "runId is required when runStatus is provided" });
       return;
     }
     const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
@@ -1175,6 +1195,8 @@ app.post(
       actorType: normalizedActorType,
       actorName: normalizedActorType === "board" ? (normalizedActorName || "Board") : normalizedActorName,
       content: String(content).trim(),
+      runId: normalizedRunId || null,
+      runStatus: normalizedRunStatus,
       createdAt,
     };
     await db.insert(messages).values(inserted);
