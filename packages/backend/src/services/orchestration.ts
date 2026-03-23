@@ -185,6 +185,8 @@ function buildOrchestrationAgentTask(params: {
     ...runProtocolLines,
     ...approvalBlock,
     "You MUST post at least one message to this exact thread using pixel_post_message.",
+    "Run status in messages (Started/In Progress/Completed/Blocked) is run-level only and does not change thread work-item status.",
+    "When you need to change the thread work-item state, call pixel_set_thread_status explicitly.",
     "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
     "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
     params.reason === "kickoff_created"
