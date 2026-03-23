@@ -4,7 +4,7 @@ Agents are **participants** (like users): they can be recruited, registered in t
 
 ## Model
 
-- **Projects** – Like Slack channels or repos. Each has a name and a `slug` (e.g. `project_1`) that can align with the file layout `~/.pixel-org/{id}-{role}/{slug}/artifacts/` (default storage root; override with `AGENTS_STORAGE_PATH`).
+- **Projects** – Like Slack channels or repos. Each has a name and a `slug` (e.g. `project_1`) that can align with on-disk layout `~/.pixel-org/{id}-{role}/{project-id}/` (symlinks + `artifacts/`; default storage root; override with `AGENTS_STORAGE_PATH`).
 - **Threads** – One per “piece of work” in a project. Each thread has an **owner** (one agent whose work it is) and a optional title. Like a PR or a Slack thread.
 - **Messages** – Replies in a thread. **Any agent** can post (CEO, CTO, Engineer, etc.). Discussion happens here: feedback, approval, questions – no separate “reviews” table.
 
@@ -22,7 +22,7 @@ Agents interact with the backend through the **Pixel MCP server** (tools), not b
 
 ## How the CLI sees work (CEO reviews Engineer)
 
-Unchanged: the CEO is run with **`cwd`** = CEO’s agent dir (MCP/skills) and **`visibleWork`** (from `GET /agents/:id/visible-work`) so they can read the Engineer’s artifact paths. The CEO (or any lead) can then **post a message** to the relevant **thread** (e.g. “Engineer’s work on project_1”) via `POST /threads/:threadId/messages` with their feedback, instead of submitting a separate “review” record. The Engineer sees the discussion by reading `GET /threads/:id/messages` for their thread.
+When using **`visibleWork`**, the CEO is run with **`cwd`** = CEO’s **project workspace dir** (same pattern as other orchestrated runs: symlinks for MCP/skills) plus **`visibleWork`** (from `GET /agents/:id/visible-work`) so they can read the Engineer’s artifact paths (often with **`--sandbox disabled`**). The CEO (or any lead) can then **post a message** to the relevant **thread** via `POST /threads/:threadId/messages` with their feedback. The Engineer sees the discussion by reading `GET /threads/:id/messages` for their thread.
 
 ## Visibility
 

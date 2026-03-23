@@ -108,7 +108,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
 
 /**
  * Map provider + task to CLI command and args.
- * --workspace <cwd>: agent runs in their own dir (so MCP/skills load from there).
+ * --workspace <cwd>: Pixel orchestration passes the per-project dir (mirrored AGENTS/MCP/skills); ad-hoc calls may use the agent home.
  * --model <id>: Cursor agent model selection (default "auto", synced with PIXEL_MODEL).
  * When canReadOutsideWorkspace (e.g. CEO reviewing Engineer): add --sandbox disabled so the agent
  * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' dirs (e.g. /path/to/engineer/project_1/artifacts).

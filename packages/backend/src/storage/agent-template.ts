@@ -89,6 +89,10 @@ Execution policy:
 - use installed skills when they provide workflow guidance for available tools
 - check tool availability in-session and gracefully adapt if a tool is unavailable
 
+### Local filesystem (orchestrated Pixel runs)
+
+When Pixel runs the Cursor Agent CLI for a project, your **workspace root** is that **Pixel project folder** on disk (under ~/.pixel-org/…, not the app monorepo). AGENTS.md, MCP config, and skills are **mirrored into that folder** (symlinks to your agent home) so tools and shell share one tree. Do local work, clones, and file edits **inside that project folder**; put stated deliverables under the **artifacts/** subfolder when the run or user says so.
+
 ---
 
 ## 4) Standard Run Protocol
