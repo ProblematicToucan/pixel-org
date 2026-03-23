@@ -53,6 +53,10 @@ function normalizeDeliveryContractReason(reason: DeliveryContractFailureReason):
   return `contract_failure:${reason}`;
 }
 
+function hasContractRetryMarker(idempotencyKey: string | null | undefined): boolean {
+  return (idempotencyKey ?? "").includes(":contract-retry:1");
+}
+
 function isDeliveryContractFailure(error: string | null | undefined): boolean {
   const value = (error ?? "").trim().toLowerCase();
   return (
@@ -665,6 +669,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         })
       : { passed: true as const };
     const completionStatus = result.success && contractResult.passed ? "done" : "failed";
+    const shouldRetryContractFailure =
+      result.success && !contractResult.passed && !hasContractRetryMarker(request.idempotencyKey);
     const completionError =
       completionStatus === "done"
         ? null
@@ -690,10 +696,21 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")))
       .returning();
 
+    if (completionUpdate.length > 0 && shouldRetryContractFailure) {
+      await enqueueRun({
+        projectId: request.projectId,
+        threadId: request.threadId,
+        agentId: request.agentId,
+        reason: request.reason as "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending",
+        idempotencyKey: `${request.idempotencyKey}:contract-retry:1`,
+        approvalRequestId: request.approvalRequestId ?? null,
+      });
+    }
+
     if (completionUpdate.length > 0) {
       const agentMessageCount = msgsAfterRun.filter((m) => m.agentId === agent.id).length;
       const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
-      if (!hasAgentReply) {
+      if (!hasAgentReply && !shouldRetryContractFailure) {
         const obj = fallbackObjectiveForRunReason(request.reason);
         const fallback =
           result.success && !contractResult.passed

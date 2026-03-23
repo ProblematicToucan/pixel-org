@@ -30,6 +30,7 @@ const backToProjectLabel = computed(() =>
 type RunEvent = {
   message: Message;
   statusLabel: string | null;
+  outcomeLabel: string | null;
 };
 
 type TimelineItem =
@@ -186,6 +187,18 @@ function runPreview(content: string): string {
   return lines[0] || "No additional details.";
 }
 
+function parseOutcome(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("outcome:"));
+  if (!line) return null;
+  const value = line.slice("outcome:".length).trim().toLowerCase();
+  if (value === "failed") return "Failed";
+  if (value === "success") return "Success";
+  return value ? value[0].toUpperCase() + value.slice(1) : null;
+}
+
 function parseObjective(content: string): string | null {
   const line = content
     .split("\n")
@@ -259,6 +272,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       runEvents.push({
         message: candidate,
         statusLabel: runStageLabel(parseStatus(candidate.content)),
+        outcomeLabel: parseOutcome(candidate.content),
       });
       j += 1;
     }
@@ -444,6 +458,9 @@ onUnmounted(() => {
                   {{ event.statusLabel || "Update" }}
                 </button>
               </div>
+              <p v-if="selectedRunEvent(item).outcomeLabel" class="run-outcome">
+                Outcome: {{ selectedRunEvent(item).outcomeLabel }}
+              </p>
               <p class="content">{{ runPreview(selectedRunEvent(item).message.content) }}</p>
               <div class="run-details">
                 <p class="run-meta">Run ID: {{ item.runId }}</p>
@@ -631,6 +648,12 @@ onUnmounted(() => {
   margin-top: 0.6rem;
   border-top: 1px solid var(--border);
   padding-top: 0.5rem;
+}
+.run-outcome {
+  margin: 0.45rem 0 0;
+  color: var(--error);
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 .run-meta {
   margin: 0 0 0.45rem;
