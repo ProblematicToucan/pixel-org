@@ -3,11 +3,7 @@ import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
 import { createCliSession, runAgent } from "@pixel-org/agent-runner";
 import type { RunAgentResult } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests, approvalRequests } from "../db/index.js";
-import {
-  ensureAgentProjectLayout,
-  getAgentDir,
-  provisionAgentWorkspace,
-} from "../storage/index.js";
+import { ensureAgentProjectLayout, provisionAgentWorkspace } from "../storage/index.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
@@ -91,9 +87,8 @@ function buildOrchestrationAgentTask(params: {
 
   return [
     leadIn,
-    `Your workspace is ${params.projectDir} (project path). Work only inside this directory for any local file creation or edits for this project.`,
+    `Your workspace is ${params.projectDir} (Cursor CLI --workspace and cwd). AGENTS.md, MCP config, and skills are mirrored here from your agent home; work and clone repos inside this directory unless Pixel MCP requires reading elsewhere.`,
     `Put artifacts and deliverables under ${params.artifactsDir} (subfolder of the project path above).`,
-    `The agent CLI may be spawned with a different cwd (your agent home) for MCP/skills; still treat the project path above as the only writable project workspace unless Pixel MCP explicitly requires reading elsewhere.`,
     `Project ID: ${params.projectId}`,
     `Thread ID: ${params.threadId}`,
     `Reason: ${params.reason}`,
@@ -135,7 +130,7 @@ async function getThreadSessionId(threadId: string): Promise<string | null> {
  */
 async function ensureThreadSessionId(
   threadId: string,
-  agentDir: string,
+  workspaceDir: string,
   existing: string | null
 ): Promise<string> {
   const maxRounds = 8;
@@ -153,7 +148,7 @@ async function ensureThreadSessionId(
         continue;
       }
       try {
-        const realId = await createCliSession({ cwd: agentDir });
+        const realId = await createCliSession({ cwd: workspaceDir });
         const updated = await db
           .update(threads)
           .set({ sessionId: realId })
@@ -187,7 +182,7 @@ async function ensureThreadSessionId(
         continue;
       }
       try {
-        const realId = await createCliSession({ cwd: agentDir });
+        const realId = await createCliSession({ cwd: workspaceDir });
         const swapped = await db
           .update(threads)
           .set({ sessionId: realId })
@@ -486,7 +481,6 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
   });
 
   try {
-    const agentDir = getAgentDir({ id: agent.id, role: agent.role });
     const actorIsOwner = request.agentId === threadRow.agentId;
     const hadStoredSessionId =
       actorIsOwner && !!threadRow.sessionId && !isPendingSessionId(threadRow.sessionId);
@@ -497,10 +491,10 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       let sessionId: string;
       let continuationMode: "fresh" | "continuing";
       if (actorIsOwner) {
-        sessionId = await ensureThreadSessionId(request.threadId, agentDir, pendingExisting);
+        sessionId = await ensureThreadSessionId(request.threadId, projectDir, pendingExisting);
         continuationMode = hadStoredSessionId && attempt === 1 ? "continuing" : "fresh";
       } else {
-        sessionId = await createCliSession({ cwd: agentDir });
+        sessionId = await createCliSession({ cwd: projectDir });
         continuationMode = "fresh";
       }
 
@@ -520,7 +514,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         provider: "cursor",
         role: agent.role,
         task,
-        cwd: agentDir,
+        cwd: projectDir,
         timeoutMs: 20 * 60 * 1000,
         agentId: agent.id,
         backendUrl: process.env.PIXEL_BACKEND_URL || "http://localhost:3000",

@@ -101,6 +101,29 @@ function writeFileUtf8IfChanged(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
+/**
+ * Ensures `linkPath` is a symlink to `absTarget`. Replaces wrong symlinks, files, or dirs.
+ * Uses `file` vs `dir` type for Windows; on Unix the third arg is ignored for most cases.
+ */
+function ensureSymlinkToTarget(absTarget: string, linkPath: string, linkKind: "file" | "dir"): void {
+  const resolvedTarget = path.resolve(absTarget);
+  ensureDir(path.dirname(linkPath));
+  if (fs.existsSync(linkPath)) {
+    try {
+      const st = fs.lstatSync(linkPath);
+      if (st.isSymbolicLink()) {
+        const cur = fs.readlinkSync(linkPath);
+        const curAbs = path.isAbsolute(cur) ? path.resolve(cur) : path.resolve(path.dirname(linkPath), cur);
+        if (path.resolve(curAbs) === resolvedTarget) return;
+      }
+    } catch {
+      // replace
+    }
+    fs.rmSync(linkPath, { recursive: true, force: true });
+  }
+  fs.symlinkSync(resolvedTarget, linkPath, linkKind === "dir" ? "dir" : "file");
+}
+
 /** Copy file if dest missing or source newer/different size (template/skill updates). */
 function copyFileIfStale(src: string, dest: string): void {
   if (!fs.existsSync(src)) return;
@@ -142,7 +165,28 @@ export function ensureAgentDir(agent: { id: string; role: string }): string {
   return agentDir;
 }
 
-/** Ensures project dir + artifacts/ only (MCP/skills are at agent level). */
+/**
+ * Symlink AGENTS.md, `.cursor`/`.claude` mcp.json, and `.agents` from the agent home into
+ * `projectDir` so the Cursor CLI can use `projectDir` as `--workspace` while still loading the
+ * same persona, MCP, and skills as the canonical files under `agentDir`.
+ */
+export function syncProjectWorkspaceSymlinks(
+  agent: { id: string; role: string },
+  projectId: string
+): void {
+  const agentDir = getAgentDir(agent);
+  const projectDir = getProjectDir(agent, projectId);
+  const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
+  const agentsMd = getAgentsMdPath(agent);
+  const agentDotAgents = path.join(agentDir, ".agents");
+
+  ensureSymlinkToTarget(agentsMd, path.join(projectDir, "AGENTS.md"), "file");
+  ensureSymlinkToTarget(cursorPath, path.join(projectDir, ".cursor", "mcp.json"), "file");
+  ensureSymlinkToTarget(claudePath, path.join(projectDir, ".claude", "mcp.json"), "file");
+  ensureSymlinkToTarget(agentDotAgents, path.join(projectDir, ".agents"), "dir");
+}
+
+/** Ensures project dir + artifacts/ + workspace symlinks (AGENTS.md, MCP, skills) for CLI `--workspace`. */
 export function ensureAgentProjectLayout(
   agent: { id: string; role: string },
   projectId: string
@@ -152,6 +196,7 @@ export function ensureAgentProjectLayout(
   const artifactsDir = getArtifactsDir(agent, projectId);
 
   ensureDir(artifactsDir);
+  syncProjectWorkspaceSymlinks(agent, projectId);
   return { agentDir, projectDir, artifactsDir };
 }
 

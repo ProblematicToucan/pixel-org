@@ -6,7 +6,7 @@ const DEFAULT_CREATE_SESSION_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 5_000;
 
 export interface CreateCliSessionOptions {
-  /** Agent home directory (same as `runAgent` cwd). */
+  /** Cursor `--workspace` and process cwd (Pixel: per-project dir with mirrored AGENTS/MCP/skills). */
   cwd: string;
   /** Max time to wait for the CLI to exit (default 30s). */
   timeoutMs?: number;
