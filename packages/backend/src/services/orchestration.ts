@@ -87,7 +87,7 @@ function buildOrchestrationAgentTask(params: {
 
   return [
     leadIn,
-    `Your workspace is ${params.projectDir} (Cursor CLI --workspace and cwd). Runtime files are prepared from your agent home: AGENTS.md is linked, while MCP config and skills are local workspace copies; work and clone repos inside this directory unless Pixel MCP requires reading elsewhere.`,
+    `Your workspace is ${params.projectDir} (Cursor CLI --workspace and cwd). AGENTS.md, MCP config, and skills are mirrored here from your agent home; work and clone repos inside this directory unless Pixel MCP requires reading elsewhere.`,
     `Put artifacts and deliverables under ${params.artifactsDir} (subfolder of the project path above).`,
     `Project ID: ${params.projectId}`,
     `Thread ID: ${params.threadId}`,

@@ -35,7 +35,7 @@ Setup details, database migrations, branching, and conventions are in [**CONTRIB
 By default, agent files live under **`~/.pixel-org`** (not in this repo), so orchestrated runs do not use the monorepo root as the Cursor workspace. Layout:
 
 - **Agent home** (`{id}-{role-slug}/`): canonical **`AGENTS.md`**, **`.cursor`/`.claude` `mcp.json`**, and **`.agents/skills/`** — one set per agent, updated when you save the agent in the app or on each orchestrated run.
-- **Per Pixel project** (`…/{agent}/{project-id}/`): the backend creates **`artifacts/`** and a runtime-safe workspace for the Cursor Agent CLI (`--workspace` + shell cwd). `AGENTS.md` is symlinked from agent home, while MCP config (`.cursor/.claude mcp.json`) and `.agents` skills are materialized as local files/directories inside the project workspace.
+- **Per Pixel project** (`…/{agent}/{project-id}/`): the backend creates **`artifacts/`** for outputs and **symlinks** `AGENTS.md`, MCP config, and `.agents` from the agent home so the Cursor Agent CLI can use this folder as **`--workspace` and shell cwd** (local work and clones stay under the project path).
 
 Override the root with **`AGENTS_STORAGE_PATH`** (e.g. for local development).
 
@@ -44,13 +44,13 @@ Override the root with **`AGENTS_STORAGE_PATH`** (e.g. for local development).
 ```text
 ~/.pixel-org/   # default; or $AGENTS_STORAGE_PATH
 ├── 1-ceo/
-│   ├── AGENTS.md               # canonical persona (source for project symlink below)
+│   ├── AGENTS.md               # canonical persona (source for symlink below)
 │   ├── .cursor/mcp.json
 │   ├── .agents/skills/
 │   ├── <project-id>/           # Cursor --workspace + cwd for runs on this project
 │   │   ├── AGENTS.md -> ../../AGENTS.md
-│   │   ├── .cursor/mcp.json    # copied from agent home (local file)
-│   │   ├── .agents/skills/     # copied from agent home (local dir)
+│   │   ├── .cursor/mcp.json -> ../../.cursor/mcp.json
+│   │   ├── .agents -> ../../.agents
 │   │   └── artifacts/          # deliverables for this project
 │   └── <other-project-id>/
 │       └── ...
@@ -61,7 +61,7 @@ Override the root with **`AGENTS_STORAGE_PATH`** (e.g. for local development).
 
 - **Agent directory:** `{id}-{role-slug}` (e.g. `1-ceo`, `3-engineer`).
 - **Canonical MCP/skills:** under the agent home. In `mcp.json`, set `PIXEL_BACKEND_URL` and `PIXEL_AGENT_ID`; optionally add **`OPENAI_API_KEY`** for Mem0 OSS (`pixel_get_context`, `pixel_store_memory`).
-- **Project directory:** `AGENTS.md` symlink + local MCP/skills copy + **`artifacts/`**; orchestration also sets env **`PIXEL_PROJECT_WORKSPACE`** / **`PIXEL_PROJECT_ARTIFACTS`** on the CLI process.
+- **Project directory:** symlinks + **`artifacts/`**; orchestration also sets env **`PIXEL_PROJECT_WORKSPACE`** / **`PIXEL_PROJECT_ARTIFACTS`** on the CLI process.
 
 Override the root with env: `AGENTS_STORAGE_PATH=/path/to/parent` (agent dirs are created inside that path).
 

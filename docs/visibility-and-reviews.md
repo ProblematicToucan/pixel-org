@@ -22,7 +22,7 @@ Agents interact with the backend through the **Pixel MCP server** (tools), not b
 
 ## How the CLI sees work (CEO reviews Engineer)
 
-When using **`visibleWork`**, the CEO is run with **`cwd`** = CEO’s **project workspace dir** (same pattern as other orchestrated runs: `AGENTS.md` symlink + local MCP/skills files) plus **`visibleWork`** (from `GET /agents/:id/visible-work`) so they can read the Engineer’s **per-project workspace paths** (often with **`--sandbox disabled`**). The CEO (or any lead) can then **post a message** to the relevant **thread** via `POST /threads/:threadId/messages` with their feedback. The Engineer sees the discussion by reading `GET /threads/:id/messages` for their thread.
+When using **`visibleWork`**, the CEO is run with **`cwd`** = CEO’s **project workspace dir** (same pattern as other orchestrated runs: symlinks for MCP/skills) plus **`visibleWork`** (from `GET /agents/:id/visible-work`) so they can read the Engineer’s **per-project workspace paths** (often with **`--sandbox disabled`**). The CEO (or any lead) can then **post a message** to the relevant **thread** via `POST /threads/:threadId/messages` with their feedback. The Engineer sees the discussion by reading `GET /threads/:id/messages` for their thread.
 
 ## Visibility
 

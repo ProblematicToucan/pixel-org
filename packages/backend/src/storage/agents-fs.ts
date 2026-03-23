@@ -139,40 +139,6 @@ function copyFileIfStale(src: string, dest: string): void {
   }
 }
 
-function copyDirRecursiveIfStale(srcDir: string, destDir: string): void {
-  if (!fs.existsSync(srcDir)) return;
-  ensureDir(destDir);
-  const entries = fs.readdirSync(srcDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(srcDir, entry.name);
-    const destPath = path.join(destDir, entry.name);
-    if (entry.isDirectory()) {
-      copyDirRecursiveIfStale(srcPath, destPath);
-      continue;
-    }
-    if (entry.isFile()) {
-      copyFileIfStale(srcPath, destPath);
-    }
-  }
-}
-
-/** Copy file content into workspace path so sandboxed CLIs do not depend on symlink targets outside workspace. */
-function syncFileIntoWorkspace(src: string, dest: string): void {
-  if (!fs.existsSync(src)) return;
-  if (fs.existsSync(dest)) {
-    try {
-      const st = fs.lstatSync(dest);
-      if (st.isSymbolicLink()) {
-        fs.rmSync(dest, { force: true });
-      }
-    } catch {
-      // fall through
-    }
-  }
-  const content = fs.readFileSync(src, "utf-8");
-  writeFileUtf8IfChanged(dest, content);
-}
-
 /** Ensures agent dir + .cursor/.claude mcp.json + .agents/skills/. */
 export function ensureAgentDir(agent: { id: string; role: string }): string {
   const agentDir = getAgentDir(agent);
@@ -200,13 +166,11 @@ export function ensureAgentDir(agent: { id: string; role: string }): string {
 }
 
 /**
- * Prepare project runtime files so the CLI can use `projectDir` as `--workspace`:
- * - `AGENTS.md` is symlinked from agent home,
- * - `.cursor/.claude mcp.json` are copied as local files,
- * - `.agents` is copied as local directory content.
- * This keeps run-critical files inside workspace for sandboxed CLI sessions.
+ * Symlink AGENTS.md, `.cursor`/`.claude` mcp.json, and `.agents` from the agent home into
+ * `projectDir` so the Cursor CLI can use `projectDir` as `--workspace` while still loading the
+ * same persona, MCP, and skills as the canonical files under `agentDir`.
  */
-export function syncProjectWorkspaceRuntimeFiles(
+export function syncProjectWorkspaceSymlinks(
   agent: { id: string; role: string },
   projectId: string
 ): void {
@@ -215,28 +179,13 @@ export function syncProjectWorkspaceRuntimeFiles(
   const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
   const agentsMd = getAgentsMdPath(agent);
   const agentDotAgents = path.join(agentDir, ".agents");
-  const workspaceDotAgents = path.join(projectDir, ".agents");
-
   ensureSymlinkToTarget(agentsMd, path.join(projectDir, "AGENTS.md"), "file");
-  // Keep MCP config as real files in the workspace so agent sandbox can load them.
-  syncFileIntoWorkspace(cursorPath, path.join(projectDir, ".cursor", "mcp.json"));
-  syncFileIntoWorkspace(claudePath, path.join(projectDir, ".claude", "mcp.json"));
-  // Keep skills local to workspace; avoid directory symlink outside sandbox root.
-  if (fs.existsSync(workspaceDotAgents)) {
-    try {
-      const st = fs.lstatSync(workspaceDotAgents);
-      if (st.isSymbolicLink()) {
-        fs.rmSync(workspaceDotAgents, { recursive: true, force: true });
-      }
-    } catch {
-      // ignore and continue
-    }
-  }
-  ensureDir(workspaceDotAgents);
-  copyDirRecursiveIfStale(agentDotAgents, workspaceDotAgents);
+  ensureSymlinkToTarget(cursorPath, path.join(projectDir, ".cursor", "mcp.json"), "file");
+  ensureSymlinkToTarget(claudePath, path.join(projectDir, ".claude", "mcp.json"), "file");
+  ensureSymlinkToTarget(agentDotAgents, path.join(projectDir, ".agents"), "dir");
 }
 
-/** Ensures project dir + artifacts/ + runtime workspace files for CLI `--workspace`. */
+/** Ensures project dir + artifacts/ + workspace symlinks (AGENTS.md, MCP, skills) for CLI `--workspace`. */
 export function ensureAgentProjectLayout(
   agent: { id: string; role: string },
   projectId: string
@@ -246,12 +195,9 @@ export function ensureAgentProjectLayout(
   const artifactsDir = getArtifactsDir(agent, projectId);
 
   ensureDir(artifactsDir);
-  syncProjectWorkspaceRuntimeFiles(agent, projectId);
+  syncProjectWorkspaceSymlinks(agent, projectId);
   return { agentDir, projectDir, artifactsDir };
 }
-
-/** Backward-compatible alias; prefer `syncProjectWorkspaceRuntimeFiles`. */
-export const syncProjectWorkspaceSymlinks = syncProjectWorkspaceRuntimeFiles;
 
 /** Full path: {storageRoot}/{agentDirName}/AGENTS.md (persona for CLI). */
 export function getAgentsMdPath(agent: { id: string; role: string }): string {
