@@ -82,7 +82,7 @@ function buildProjectSlug(name: string): string {
   return `${base}-${randomText}-${randomNumber}`;
 }
 
-function parseTerminalOrProgressThreadStatusFromMessage(content: string): "in_progress" | "completed" | "blocked" | null {
+function parseTerminalOrProgressThreadStatusFromMessage(content: string): "in_progress" | "blocked" | null {
   const line = content
     .split("\n")
     .map((s) => s.trim())
@@ -90,7 +90,6 @@ function parseTerminalOrProgressThreadStatusFromMessage(content: string): "in_pr
   if (!line) return null;
   const normalized = line.slice("status:".length).trim().toLowerCase();
   if (normalized === "in progress") return "in_progress";
-  if (normalized === "completed") return "completed";
   if (normalized === "blocked") return "blocked";
   return null;
 }
