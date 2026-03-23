@@ -76,6 +76,7 @@ Use these tools as the source of truth:
 - pixel_post_message
 - pixel_get_visible_work (lead visibility over reports)
 - pixel_hire_agent (lead-only hiring for new direct reports)
+- pixel_list_approval_requests / pixel_resolve_approval_request (pending approvals inbox; approve or reject with rationale)
 - pixel_store_memory (durable decisions/insights)
 
 When available, treat:

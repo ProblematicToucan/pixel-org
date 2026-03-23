@@ -1,0 +1,2 @@
+CREATE INDEX IF NOT EXISTS "approval_requests_approver_status_created_at_idx" ON "approval_requests" USING btree ("approver_agent_id","status","created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "approval_requests_requester_status_created_at_idx" ON "approval_requests" USING btree ("requester_agent_id","status","created_at");

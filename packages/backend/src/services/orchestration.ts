@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
 import { createCliSession, runAgent } from "@pixel-org/agent-runner";
 import type { RunAgentResult } from "@pixel-org/agent-runner";
-import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
+import { db, agents, projects, threads, messages, agentRunRequests, approvalRequests } from "../db/index.js";
 import {
   ensureAgentProjectLayout,
   getAgentDir,
@@ -26,6 +26,8 @@ function fallbackObjectiveForRunReason(reason: string): string {
       return "Respond to thread message";
     case "scheduled_awake":
       return "Scheduled awake run";
+    case "approval_pending":
+      return "Resolve pending approval request";
     default:
       return "Agent run";
   }
@@ -33,7 +35,7 @@ function fallbackObjectiveForRunReason(reason: string): string {
 
 /** Builds the headless CLI task string; `continuationMode` toggles strict vs optional `pixel_get_context`. */
 function buildOrchestrationAgentTask(params: {
-  reason: "kickoff_created" | "scheduled_awake" | "thread_message";
+  reason: "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending";
   projectId: string;
   threadId: string;
   projectDir: string;
@@ -41,6 +43,7 @@ function buildOrchestrationAgentTask(params: {
   model: string;
   projectGoals: string | null;
   continuationMode: "fresh" | "continuing";
+  approvalRequestId?: string | null;
 }): string {
   const runProtocolLines =
     params.continuationMode === "fresh"
@@ -59,12 +62,35 @@ function buildOrchestrationAgentTask(params: {
           "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
         ];
 
-  return [
+  const leadIn =
     params.reason === "kickoff_created"
       ? "A board kickoff thread has been created."
       : params.reason === "thread_message"
         ? "A new message was posted in one of your owned threads. Review it and respond with next actions."
-        : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.",
+        : params.reason === "approval_pending"
+          ? "You must resolve a pending approval request assigned to you as approver."
+          : "You are waking up on a scheduled cycle. First check Pixel MCP for assigned work, then execute highest-priority task.";
+
+  const approvalBlock =
+    params.reason === "approval_pending" && params.approvalRequestId
+      ? [
+          "",
+          "Approval workflow (required):",
+          `- Approval request ID: ${params.approvalRequestId}`,
+          `- Use pixel_list_approval_requests with as=approver and status=pending, or resolve this ID directly.`,
+          `- Read pixel_list_messages on this thread for full context.`,
+          `- Call pixel_resolve_approval_request with approvalRequestId, decision (approved or rejected), and resolutionNote.`,
+          `- After resolving, post a short pixel_post_message on this same thread summarizing the decision for the audit trail (Status: Completed).`,
+        ]
+      : params.reason === "approval_pending"
+        ? [
+            "",
+            "Approval workflow: use pixel_list_approval_requests, then pixel_resolve_approval_request, then post a summary message on this thread.",
+          ]
+        : [];
+
+  return [
+    leadIn,
     `Your workspace is ${params.projectDir} (project path). Work only inside this directory for any local file creation or edits for this project.`,
     `Put artifacts and deliverables under ${params.artifactsDir} (subfolder of the project path above).`,
     `The agent CLI may be spawned with a different cwd (your agent home) for MCP/skills; still treat the project path above as the only writable project workspace unless Pixel MCP explicitly requires reading elsewhere.`,
@@ -73,12 +99,15 @@ function buildOrchestrationAgentTask(params: {
     `Reason: ${params.reason}`,
     `Model policy: ${params.model}.`,
     ...runProtocolLines,
+    ...approvalBlock,
     "You MUST post at least one message to this exact thread using pixel_post_message.",
     "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
     "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
-      : "Use the project goals to prioritize work in this thread.",
+      : params.reason === "approval_pending"
+        ? "You are the approver: decide using project goals, visible work (if applicable), and thread context."
+        : "Use the project goals to prioritize work in this thread.",
     params.projectGoals ? `Project goals:\n${params.projectGoals}` : "Project goals are currently empty.",
   ].join("\n");
 }
@@ -322,6 +351,27 @@ async function drainQueuedRequests(): Promise<void> {
   }
 }
 
+/**
+ * Drop queued approval_pending runs for this approval id.
+ * Does not mark `running` rows (CLI may still be active); those exit early when approval is no longer pending.
+ */
+export async function cancelApprovalRunsForRequest(approvalRequestId: string): Promise<void> {
+  await db
+    .update(agentRunRequests)
+    .set({
+      status: "cancelled",
+      error: "Approval request cancelled",
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(agentRunRequests.approvalRequestId, approvalRequestId),
+        eq(agentRunRequests.status, "queued")
+      )
+    );
+}
+
 async function runQueuedRequest(requestId: string, claimedAgentId?: string): Promise<void> {
   const [request] = await db.select().from(agentRunRequests).where(eq(agentRunRequests.id, requestId)).limit(1);
   if (!request) {
@@ -330,6 +380,14 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       activeProcessCount = Math.max(0, activeProcessCount - 1);
       scheduleQueueDispatcher();
     }
+    return;
+  }
+
+  if (request.status === "cancelled") {
+    const ownerAgentId = claimedAgentId ?? request.agentId;
+    runningAgentIds.delete(ownerAgentId);
+    activeProcessCount = Math.max(0, activeProcessCount - 1);
+    scheduleQueueDispatcher();
     return;
   }
 
@@ -375,6 +433,30 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     return;
   }
 
+  if (request.reason === "approval_pending" && request.approvalRequestId) {
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, request.approvalRequestId))
+      .limit(1);
+    if (!ap || ap.status !== "pending") {
+      await db
+        .update(agentRunRequests)
+        .set({
+          status: "done",
+          error: null,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")));
+      const ownerEarly = claimedAgentId ?? request.agentId;
+      runningAgentIds.delete(ownerEarly);
+      activeProcessCount = Math.max(0, activeProcessCount - 1);
+      scheduleQueueDispatcher();
+      return;
+    }
+  }
+
   // Refresh agent workspace so latest MCP skill/template updates are present before each run.
   provisionAgentWorkspace({
     id: agent.id,
@@ -398,35 +480,32 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     actorName: agent.name,
     content: [
       "Status: Started",
-      `Objective: ${
-        request.reason === "kickoff_created"
-          ? "Kickoff response"
-          : request.reason === "thread_message"
-            ? "Respond to new thread message"
-            : "Awake check and task execution"
-      } for project ${request.projectId}`,
+      `Objective: ${fallbackObjectiveForRunReason(request.reason)} for project ${request.projectId}`,
       `Run: ${request.id} (${request.reason}, model=${request.model})`,
     ].join("\n"),
   });
 
   try {
     const agentDir = getAgentDir({ id: agent.id, role: agent.role });
+    const actorIsOwner = request.agentId === threadRow.agentId;
     const hadStoredSessionId =
-      !!threadRow.sessionId && !isPendingSessionId(threadRow.sessionId);
-    let pendingExisting: string | null = threadRow.sessionId;
+      actorIsOwner && !!threadRow.sessionId && !isPendingSessionId(threadRow.sessionId);
+    let pendingExisting: string | null = actorIsOwner ? threadRow.sessionId : null;
 
     let result!: RunAgentResult;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const sessionId = await ensureThreadSessionId(
-        request.threadId,
-        agentDir,
-        pendingExisting
-      );
+      let sessionId: string;
+      let continuationMode: "fresh" | "continuing";
+      if (actorIsOwner) {
+        sessionId = await ensureThreadSessionId(request.threadId, agentDir, pendingExisting);
+        continuationMode = hadStoredSessionId && attempt === 1 ? "continuing" : "fresh";
+      } else {
+        sessionId = await createCliSession({ cwd: agentDir });
+        continuationMode = "fresh";
+      }
 
-      const continuationMode =
-        hadStoredSessionId && attempt === 1 ? "continuing" : "fresh";
       const task = buildOrchestrationAgentTask({
-        reason: request.reason as "kickoff_created" | "thread_message" | "scheduled_awake",
+        reason: request.reason as "kickoff_created" | "thread_message" | "scheduled_awake" | "approval_pending",
         projectId: request.projectId,
         threadId: request.threadId,
         projectDir,
@@ -434,6 +513,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         model: request.model,
         projectGoals: project.goals,
         continuationMode,
+        approvalRequestId: request.approvalRequestId ?? null,
       });
 
       result = await runAgent({
@@ -451,6 +531,9 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
           PIXEL_PROJECT_ID: request.projectId,
           PIXEL_PROJECT_WORKSPACE: projectDir,
           PIXEL_PROJECT_ARTIFACTS: artifactsDir,
+          ...(request.approvalRequestId
+            ? { PIXEL_APPROVAL_REQUEST_ID: request.approvalRequestId }
+            : {}),
         },
         onSpawn: ({ pid, command, args }) => {
           void db
@@ -467,6 +550,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
 
       if (result.success) break;
       if (
+        actorIsOwner &&
         attempt === 1 &&
         hadStoredSessionId &&
         shouldInvalidateStoredSessionOnFailure(result.stderr, result.exitCode, result.timedOut)
@@ -483,7 +567,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       break;
     }
 
-    await db
+    const completionUpdate = await db
       .update(agentRunRequests)
       .set({
         status: result.success ? "done" : "failed",
@@ -498,35 +582,38 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(agentRunRequests.id, request.id));
+      .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")))
+      .returning();
 
-    const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
-    const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
-    const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
-    if (!hasAgentReply) {
-      const obj = fallbackObjectiveForRunReason(request.reason);
-      const fallback = result.success
-        ? [
-            "Status: Completed",
-            `Objective: ${obj}`,
-            "Actions:",
-            "- CLI run completed but no thread update was posted by agent.",
-            "- Added fallback update for audit continuity.",
-            "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
-          ].join("\n")
-        : [
-            "Status: Blocked",
-            `Objective: ${obj}`,
-            `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
-            formatAgentCliFailureForThread(result.stderr, result.exitCode),
-          ].join("\n");
-      await db.insert(messages).values({
-        threadId: request.threadId,
-        agentId: agent.id,
-        actorType: "agent",
-        actorName: agent.name,
-        content: fallback,
-      });
+    if (completionUpdate.length > 0) {
+      const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+      const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+      const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
+      if (!hasAgentReply) {
+        const obj = fallbackObjectiveForRunReason(request.reason);
+        const fallback = result.success
+          ? [
+              "Status: Completed",
+              `Objective: ${obj}`,
+              "Actions:",
+              "- CLI run completed but no thread update was posted by agent.",
+              "- Added fallback update for audit continuity.",
+              "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
+            ].join("\n")
+          : [
+              "Status: Blocked",
+              `Objective: ${obj}`,
+              `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+              formatAgentCliFailureForThread(result.stderr, result.exitCode),
+            ].join("\n");
+        await db.insert(messages).values({
+          threadId: request.threadId,
+          agentId: agent.id,
+          actorType: "agent",
+          actorName: agent.name,
+          content: fallback,
+        });
+      }
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : "Unknown orchestration error";
@@ -538,7 +625,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(agentRunRequests.id, request.id));
+      .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")));
     await enqueuePendingFollowupIfNeeded({
       threadId: request.threadId,
       projectId: request.projectId,
@@ -568,29 +655,48 @@ async function enqueueRun(params: {
   projectId: string;
   threadId: string;
   agentId: string;
-  reason: "kickoff_created" | "scheduled_awake" | "thread_message";
+  reason: "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending";
   idempotencyKey: string;
+  approvalRequestId?: string | null;
 }): Promise<void> {
-  const [existing] = await db
-    .select()
-    .from(agentRunRequests)
-    .where(eq(agentRunRequests.idempotencyKey, params.idempotencyKey))
-    .limit(1);
-  if (existing) return;
-
   const requestId = randomUUID();
-  await db.insert(agentRunRequests).values({
-    id: requestId,
-    projectId: params.projectId,
-    threadId: params.threadId,
-    agentId: params.agentId,
-    reason: params.reason,
-    model: "auto",
-    idempotencyKey: params.idempotencyKey,
-    status: "queued",
-  });
+  const inserted = await db
+    .insert(agentRunRequests)
+    .values({
+      id: requestId,
+      projectId: params.projectId,
+      threadId: params.threadId,
+      agentId: params.agentId,
+      reason: params.reason,
+      model: "auto",
+      idempotencyKey: params.idempotencyKey,
+      status: "queued",
+      approvalRequestId: params.approvalRequestId ?? null,
+    })
+    .onConflictDoNothing({ target: agentRunRequests.idempotencyKey })
+    .returning();
 
-  scheduleQueueDispatcher();
+  if (inserted.length > 0) {
+    scheduleQueueDispatcher();
+  }
+}
+
+/** Enqueue the approver agent to process a pending approval (durable inbox + wake). */
+export async function enqueueApprovalPendingRun(params: {
+  projectId: string;
+  sourceThreadId: string;
+  approverAgentId: string;
+  approvalRequestId: string;
+}): Promise<void> {
+  const idempotencyKey = `approval_pending:${params.approvalRequestId}`;
+  await enqueueRun({
+    projectId: params.projectId,
+    threadId: params.sourceThreadId,
+    agentId: params.approverAgentId,
+    reason: "approval_pending",
+    idempotencyKey,
+    approvalRequestId: params.approvalRequestId,
+  });
 }
 
 async function enqueuePendingFollowupIfNeeded(request: {

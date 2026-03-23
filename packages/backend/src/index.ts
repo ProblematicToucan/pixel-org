@@ -16,6 +16,12 @@ import {
   canAssignThreadOwner,
 } from "./services/visible-work.js";
 import {
+  cancelApprovalRequest,
+  createApprovalRequest,
+  listApprovalRequestsForAgent,
+  resolveApprovalRequest,
+} from "./services/approvals.js";
+import {
   enqueueKickoffLeadRun,
   enqueueThreadOwnerRunOnMessage,
   reconcileActiveRunsForReadEndpoint,
@@ -34,6 +40,7 @@ import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
 import { HttpError } from "./httpError.js";
 import { reportErrorToHealer } from "./healerClient.js";
+import { emitThreadMessage, subscribeThreadMessageStream } from "./threadMessageSse.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -52,17 +59,6 @@ function routeParam(req: express.Request, name: string): string {
   if (Array.isArray(v)) return (v[0] ?? "").trim();
   return (v ?? "").trim();
 }
-const threadMessageStreams = new Map<string, Set<express.Response>>();
-
-function emitThreadMessage(threadId: string, payload: unknown): void {
-  const listeners = threadMessageStreams.get(threadId);
-  if (!listeners || listeners.size === 0) return;
-  const event = `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const res of listeners) {
-    res.write(event);
-  }
-}
-
 /** PostgreSQL `unique_violation` (e.g. partial unique index); may be nested under Drizzle/pg driver errors. */
 function isPostgresUniqueViolation(err: unknown): boolean {
   let current: unknown = err;
@@ -373,6 +369,179 @@ app.get(
       res.json(work);
     } catch (err) {
       throw new HttpError(500, "Failed to get visible work", { cause: err });
+    }
+  })
+);
+
+/** List approval requests where this agent is approver or requester (`as` query: approver | requester). */
+app.get(
+  "/agents/:id/approval-requests",
+  asyncHandler(async (req, res) => {
+    try {
+      const id = routeParam(req, "id");
+      if (!id) {
+        res.status(400).json({ error: "Invalid agent id" });
+        return;
+      }
+      const validAs = ["approver", "requester"] as const;
+      const validStatuses = ["pending", "approved", "rejected", "cancelled"] as const;
+
+      if (req.query.as !== undefined && req.query.as !== null && String(req.query.as).trim() !== "") {
+        const asRaw = String(req.query.as).trim().toLowerCase();
+        if (!validAs.includes(asRaw as (typeof validAs)[number])) {
+          res.status(400).json({ error: 'Query "as" must be approver or requester' });
+          return;
+        }
+      }
+
+      const asParam = typeof req.query.as === "string" ? req.query.as.trim().toLowerCase() : "";
+      const as: (typeof validAs)[number] = asParam === "requester" ? "requester" : "approver";
+
+      const statusParam =
+        typeof req.query.status === "string" && req.query.status.trim() !== ""
+          ? req.query.status.trim().toLowerCase()
+          : "";
+      if (statusParam !== "") {
+        if (!validStatuses.includes(statusParam as (typeof validStatuses)[number])) {
+          res.status(400).json({
+            error: `Query "status" must be one of: ${validStatuses.join(", ")}`,
+          });
+          return;
+        }
+      }
+      const status = statusParam === "" ? undefined : (statusParam as (typeof validStatuses)[number]);
+
+      const rows = await listApprovalRequestsForAgent({ agentId: id, as, status });
+      res.json(rows);
+    } catch (err) {
+      throw new HttpError(500, "Failed to list approval requests", { cause: err });
+    }
+  })
+);
+
+app.post(
+  "/approval-requests",
+  asyncHandler(async (req, res) => {
+    try {
+      const {
+        requesterAgentId,
+        projectId,
+        sourceThreadId,
+        summary,
+        approverAgentId,
+        metadata,
+        idempotencyKey,
+      } = req.body ?? {};
+      if (!requesterAgentId || !projectId || !sourceThreadId || summary == null) {
+        res.status(400).json({ error: "requesterAgentId, projectId, sourceThreadId, and summary are required" });
+        return;
+      }
+      const result = await createApprovalRequest({
+        requesterAgentId: String(requesterAgentId).trim(),
+        projectId: String(projectId).trim(),
+        sourceThreadId: String(sourceThreadId).trim(),
+        summary: String(summary).trim(),
+        approverAgentId:
+          approverAgentId === undefined || approverAgentId === null ? null : String(approverAgentId).trim(),
+        metadata: metadata === undefined || metadata === null ? null : String(metadata),
+        idempotencyKey:
+          idempotencyKey === undefined || idempotencyKey === null ? null : String(idempotencyKey).trim(),
+      });
+      res.status(result.created ? 201 : 200).json({
+        success: true,
+        created: result.created,
+        approval: result.approval,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("must be") ||
+        msg.includes("Only") ||
+        msg.includes("Approver") ||
+        msg.includes("required") ||
+        msg.includes("does not match")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to create approval request", { cause: err });
+    }
+  })
+);
+
+app.patch(
+  "/approval-requests/:id/resolve",
+  asyncHandler(async (req, res) => {
+    try {
+      const approvalId = routeParam(req, "id");
+      const { resolverAgentId, decision, resolutionNote } = req.body ?? {};
+      if (!approvalId || !resolverAgentId || !decision) {
+        res.status(400).json({ error: "approval id (path), resolverAgentId, and decision are required" });
+        return;
+      }
+      const d = String(decision).trim().toLowerCase();
+      if (d !== "approved" && d !== "rejected") {
+        res.status(400).json({ error: "decision must be approved or rejected" });
+        return;
+      }
+      const note =
+        resolutionNote === undefined || resolutionNote === null ? "" : String(resolutionNote).trim();
+      if (!note) {
+        res.status(400).json({ error: "resolutionNote is required (non-empty rationale)" });
+        return;
+      }
+      await resolveApprovalRequest({
+        approvalId,
+        resolverAgentId: String(resolverAgentId).trim(),
+        decision: d,
+        resolutionNote: note,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("not pending") ||
+        msg.includes("Only the assigned approver") ||
+        msg.includes("already resolved") ||
+        msg.includes("resolutionNote")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to resolve approval request", { cause: err });
+    }
+  })
+);
+
+app.patch(
+  "/approval-requests/:id/cancel",
+  asyncHandler(async (req, res) => {
+    try {
+      const approvalId = routeParam(req, "id");
+      const { requesterAgentId } = req.body ?? {};
+      if (!approvalId || !requesterAgentId) {
+        res.status(400).json({ error: "approval id (path) and requesterAgentId are required" });
+        return;
+      }
+      await cancelApprovalRequest({
+        approvalId,
+        requesterAgentId: String(requesterAgentId).trim(),
+      });
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("Only the requester") ||
+        msg.includes("Only pending") ||
+        msg.includes("already resolved")
+      ) {
+        res.status(400).json({ error: msg });
+        return;
+      }
+      throw new HttpError(500, "Failed to cancel approval request", { cause: err });
     }
   })
 );
@@ -855,12 +1024,7 @@ app.get("/threads/:id/stream", async (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  let listeners = threadMessageStreams.get(threadId);
-  if (!listeners) {
-    listeners = new Set();
-    threadMessageStreams.set(threadId, listeners);
-  }
-  listeners.add(res);
+  const unsubscribe = subscribeThreadMessageStream(threadId, res);
   res.write("event: connected\ndata: ok\n\n");
 
   const heartbeat = setInterval(() => {
@@ -869,12 +1033,7 @@ app.get("/threads/:id/stream", async (req, res) => {
 
   req.on("close", () => {
     clearInterval(heartbeat);
-    const current = threadMessageStreams.get(threadId);
-    if (!current) return;
-    current.delete(res);
-    if (current.size === 0) {
-      threadMessageStreams.delete(threadId);
-    }
+    unsubscribe();
   });
 });
 
