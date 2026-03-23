@@ -149,14 +149,14 @@ function parseStatus(content: string): string | null {
   return line.slice(7).trim() || null;
 }
 
-function titleCaseStatus(status: string | null): string {
-  if (!status) return "Update";
-  return status
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
+function runStageLabel(status: string | null): string | null {
+  if (!status) return null;
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "started") return "Started";
+  if (normalized === "in progress") return "In Progress";
+  // Run-level "blocked" is rendered as terminal run stage "Complete".
+  if (normalized === "completed" || normalized === "blocked") return "Complete";
+  return null;
 }
 
 function runPreview(content: string): string {
@@ -258,7 +258,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       if (messageRunKeys.value[candidate.id] !== runKey) break;
       runEvents.push({
         message: candidate,
-        statusLabel: titleCaseStatus(parseStatus(candidate.content)),
+        statusLabel: runStageLabel(parseStatus(candidate.content)),
       });
       j += 1;
     }
@@ -270,7 +270,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
     }
 
     const latest = runEvents[runEvents.length - 1].message;
-    const latestStatus = titleCaseStatus(parseStatus(latest.content));
+    const latestStatus = runStageLabel(parseStatus(latest.content)) ?? "Update";
     const rawRunId = runKey.startsWith("run:") ? runKey.slice(4) : runKey;
     items.push({
       kind: "run",
@@ -314,11 +314,7 @@ function startedInfoSummary(message: Message): string {
 
 function standaloneRunStatusLabel(message: Message): string | null {
   if (message.actorType !== "agent") return null;
-  const normalized = parseStatus(message.content)?.trim().toLowerCase();
-  if (normalized === "in progress" || normalized === "completed" || normalized === "blocked") {
-    return titleCaseStatus(normalized);
-  }
-  return null;
+  return runStageLabel(parseStatus(message.content));
 }
 
 function closeLiveUpdates() {

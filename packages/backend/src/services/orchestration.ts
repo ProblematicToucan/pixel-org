@@ -46,7 +46,7 @@ function isStartedStatusToken(status: string | null): boolean {
 }
 
 function isTerminalStatusToken(status: string | null): boolean {
-  return status === "completed" || status === "blocked";
+  return status === "completed";
 }
 
 function normalizeDeliveryContractReason(reason: DeliveryContractFailureReason): string {
@@ -55,7 +55,10 @@ function normalizeDeliveryContractReason(reason: DeliveryContractFailureReason):
 
 function isDeliveryContractFailure(error: string | null | undefined): boolean {
   const value = (error ?? "").trim().toLowerCase();
-  return value.includes("contract_failure:missing_agent_thread_update");
+  return (
+    value.includes("contract_failure:missing_agent_thread_update") ||
+    value.includes("contract_failure:missing_terminal_status_update")
+  );
 }
 
 function evaluateRunDeliveryContract(params: {
@@ -137,14 +140,14 @@ function buildOrchestrationAgentTask(params: {
           "- Call pixel_get_context first.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
           "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- If actionable work exists, post 'Status: In Progress', do the work, then post terminal 'Status: Completed'.",
         ]
       : [
           "Run protocol:",
           "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
           "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- If actionable work exists, post 'Status: In Progress', do the work, then post terminal 'Status: Completed'.",
         ];
 
   const leadIn =
@@ -185,9 +188,9 @@ function buildOrchestrationAgentTask(params: {
     ...runProtocolLines,
     ...approvalBlock,
     "You MUST post at least one message to this exact thread using pixel_post_message.",
-    "Run status in messages (Started/In Progress/Completed/Blocked) is run-level only and does not change thread work-item status.",
+    "Run status in messages uses only Started/In Progress/Completed and is run-level only; it does not change thread work-item status.",
     "When you need to change the thread work-item state, call pixel_set_thread_status explicitly.",
-    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
+    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with terminal 'Status: Completed' when done.",
     "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
@@ -695,24 +698,27 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         const fallback =
           result.success && !contractResult.passed
             ? [
-                "Status: Blocked",
+                "Status: Completed",
                 `Objective: ${obj}`,
                 `Reason code: ${contractResult.reason}`,
                 "Reason: Run failed strict completion contract; required owner-agent thread output missing.",
+                "Outcome: Failed",
                 "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
               ].join("\n")
             : result.success
               ? [
-                  "Status: Blocked",
+                  "Status: Completed",
                   `Objective: ${obj}`,
                   "Reason code: missing_agent_thread_update",
                   "Reason: Run completed but owner-agent thread update was missing.",
+                  "Outcome: Failed",
                   "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
                 ].join("\n")
           : [
-              "Status: Blocked",
+              "Status: Completed",
               `Objective: ${obj}`,
               `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+              "Outcome: Failed",
               formatAgentCliFailureForThread(result.stderr, result.exitCode),
             ].join("\n");
         await db.insert(messages).values({
@@ -746,9 +752,10 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       actorType: "agent",
       actorName: agent.name,
       content: [
-        "Status: Blocked",
+        "Status: Completed",
         `Objective: ${fallbackObjectiveForRunReason(request.reason)}`,
         `Reason: Orchestration error while launching agent CLI.`,
+        "Outcome: Failed",
         `Detail: ${errMsg}`,
       ].join("\n"),
     });
@@ -918,7 +925,7 @@ function computeNextAwakeAt(now: Date, intervalMinutes: number): Date {
 
 function isTerminalStatus(content: string): boolean {
   const normalized = content.trim().toLowerCase();
-  return normalized.startsWith("status: completed") || normalized.startsWith("status: blocked");
+  return normalized.startsWith("status: completed");
 }
 
 async function hasTerminalAgentMessageSinceStart(request: typeof agentRunRequests.$inferSelect): Promise<boolean> {

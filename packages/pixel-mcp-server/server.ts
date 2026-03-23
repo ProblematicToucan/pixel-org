@@ -425,7 +425,7 @@ export function createServer(): McpServer {
         threadId: z.string().describe("Thread UUID"),
         content: z.string().optional().describe("Raw message content (legacy free-form path)"),
         status: z
-          .enum(["started", "in_progress", "completed", "blocked"])
+          .enum(["started", "in_progress", "completed"])
           .optional()
           .describe("Optional structured status token for orchestration-friendly updates"),
         objective: z
@@ -445,7 +445,7 @@ export function createServer(): McpServer {
     async (args: {
       threadId?: string;
       content?: string;
-      status?: "started" | "in_progress" | "completed" | "blocked";
+      status?: "started" | "in_progress" | "completed";
       objective?: string;
       actions?: string[];
       reason?: string;
