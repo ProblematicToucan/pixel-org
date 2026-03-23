@@ -4,7 +4,7 @@
 
 **Context (from agent transcripts):**
 - Backend: agents, projects, threads, messages; visible-work; UUIDs.
-- Agent CLI runs with `--workspace` = **per-project dir** under the agent (`…/{agent}/{project-id}/`). Canonical `AGENTS.md`, MCP config, and `.agents` live in the **agent home**; the backend **symlinks** them into that project folder so MCP/skills and shell cwd align with the Pixel project path.
+- Agent CLI runs with `--workspace` = **per-project dir** under the agent (`…/{agent}/{project-id}/`). Canonical `AGENTS.md`, MCP config, and `.agents` live in the **agent home**. For runtime robustness in sandboxed CLI sessions, project workspaces keep `AGENTS.md` as a symlink but materialize local MCP config and `.agents` files/directories inside the project folder.
 - We want a single, consistent way for each agent to: record work, read context (tickets/comments, goals), and get visible work — without teaching the agent “call this HTTP endpoint” in a skill.
 
 ---
@@ -188,7 +188,12 @@ Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL
    - No change for v1. Optional: add logging or a middleware that logs “request from MCP” (e.g. User-Agent or header) for audit.
 
 4. **Agent provisioning**
-   - When creating an agent (DB + `ensureAgentDir`), write or update `./.cursor/mcp.json` (or `./.claude/mcp.json`) in the **agent home** with the Pixel MCP server entry and `PIXEL_AGENT_ID` (and optionally `PIXEL_BACKEND_URL` if not global). Orchestrated runs symlink those files into each **project** workspace dir for the CLI.
+   - When creating an agent (DB + `ensureAgentDir`), write or update `./.cursor/mcp.json` (or `./.claude/mcp.json`) in the **agent home** with the Pixel MCP server entry and `PIXEL_AGENT_ID` (and optionally `PIXEL_BACKEND_URL` if not global).
+   - For each orchestrated run workspace:
+     - keep `AGENTS.md` as a symlink to agent home,
+     - copy `./.cursor/mcp.json` and `./.claude/mcp.json` as local files in the project workspace,
+     - copy `./.agents` into the project workspace as local content (no directory symlink).
+   - This avoids sandbox/symlink resolution issues where MCP tools or skills can become unavailable during headless runs.
 
 5. **Docs**
    - Update `docs/visibility-and-reviews.md` (or a new doc) to say: “Agents interact with the backend via the Pixel MCP server (tools), not by calling the REST API directly.”
