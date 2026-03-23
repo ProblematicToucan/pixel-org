@@ -116,7 +116,7 @@ export interface LinkedProject {
 
 export interface VisibleProject {
   projectId: string;
-  artifactsPath: string;
+  projectPath: string;
   linkedProject: LinkedProject | null;
 }
 
@@ -125,7 +125,7 @@ export interface ProjectAgentWorkspace {
   name: string;
   role: string;
   agentDir: string;
-  artifactsPath: string;
+  projectPath: string;
 }
 
 export interface VisibleAgentWork {

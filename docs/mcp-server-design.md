@@ -103,7 +103,7 @@ Expose these as MCP tools so the agent doesn’t need to know HTTP or URLs. Sugg
 
 | MCP tool | Backend call | Purpose |
 |----------|----------------|---------|
-| `pixel_get_visible_work` | GET /agents/:id/visible-work | Lead sees self + reports’ artifact paths (and can read those dirs). |
+| `pixel_get_visible_work` | GET /agents/:id/visible-work | Lead sees self + reports’ per-project workspace paths (`projectPath`; and can read those dirs). |
 | `pixel_list_projects` | GET /projects | List projects (channels). |
 | `pixel_create_project` | POST /projects | Create project (if we allow agent to). Optional. |
 | `pixel_list_threads` | GET /projects/:id/threads | List threads in a project. |
@@ -162,7 +162,7 @@ Env: **`OPENAI_API_KEY`** on the MCP server (embedder + LLM). Optional: **`PIXEL
    - At start: call `pixel_list_projects`, then for “my” project(s) call `pixel_list_threads` and `pixel_list_messages` → treat messages as tickets/comments/requests.  
    - When starting work: `pixel_create_thread` (or reuse existing thread) and `pixel_post_message` (“Started: …”).  
    - When finishing: `pixel_post_message` (“Completed: …” or “Blocked: …”).  
-   - If lead: `pixel_get_visible_work` to get report artifact paths, then read those dirs (sandbox disabled when needed).  
+   - If lead: `pixel_get_visible_work` to get report per-project paths, then read those dirs (sandbox disabled when needed).  
 
    So the **minimum skills** for “record and audit” and “read user input” become: “Use the Pixel MCP tools (pixel_*) to list projects/threads/messages, create threads, and post messages.” No HTTP or URLs in the skill.
 

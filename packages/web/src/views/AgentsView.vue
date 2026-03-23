@@ -98,7 +98,7 @@ onMounted(load);
                     <span class="meta unlinked-hint">(no matching DB project)</span>
                   </template>
                 </div>
-                <div class="artifacts-path">{{ p.artifactsPath }}</div>
+                <div class="project-path">{{ p.projectPath }}</div>
               </li>
             </ul>
           </li>
@@ -253,7 +253,7 @@ h1 {
 .unlinked-hint {
   font-style: italic;
 }
-.artifacts-path {
+.project-path {
   margin-top: 0.2rem;
   font-size: 0.8rem;
   color: var(--muted);

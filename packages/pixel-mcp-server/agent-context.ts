@@ -52,7 +52,7 @@ export async function buildAgentContextBlock(options: {
   if (options.includeVisibleWork) {
     try {
       const work = await backend.getVisibleWork();
-      lines.push("## Visible work (artifact paths)");
+      lines.push("## Visible work (project paths)");
       lines.push(JSON.stringify(work, null, 2));
       lines.push("");
     } catch (err) {

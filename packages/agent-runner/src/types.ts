@@ -1,4 +1,4 @@
-/** One project's artifact path (from GET /agents/:id/visible-work). */
+/** One project's workspace path (from GET /agents/:id/visible-work). */
 export interface LinkedProject {
   id: string;
   name: string;
@@ -7,11 +7,11 @@ export interface LinkedProject {
 
 export interface VisibleProject {
   projectId: string;
-  artifactsPath: string;
+  projectPath: string;
   linkedProject: LinkedProject | null;
 }
 
-/** One agent's visible work (self or report). CLI can read files under each project's artifactsPath. */
+/** One agent's visible work (self or report). CLI can read files under each project's projectPath. */
 export interface VisibleAgentWork {
   agentId: string;
   name: string;
@@ -31,7 +31,7 @@ export interface RunAgentOptions {
   cwd?: string;
   /** Optional timeout in ms */
   timeoutMs?: number;
-  /** Visible work (e.g. from GET /agents/:id/visible-work). Set as PIXEL_VISIBLE_WORK so the CLI can read report artifacts and review code. */
+  /** Visible work (e.g. from GET /agents/:id/visible-work). Set as PIXEL_VISIBLE_WORK so the CLI can read report project dirs and review code. */
   visibleWork?: VisibleAgentWork[];
   /** Agent UUID. When set, passed as PIXEL_AGENT_ID so the Pixel MCP server can identify the agent. */
   agentId?: string;

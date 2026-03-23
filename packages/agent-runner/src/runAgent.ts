@@ -10,7 +10,7 @@ const MODEL_ENV_KEY = "PIXEL_MODEL";
 /**
  * Invokes the configured agent CLI with the given role and task.
  * Caller (orchestrator) is responsible for choosing provider, role, and task.
- * If visibleWork is provided (e.g. from GET /agents/:id/visible-work), the CLI can read those artifact paths to review report work.
+ * If visibleWork is provided (e.g. from GET /agents/:id/visible-work), the CLI can read those project paths to review report work.
  * If agentId/backendUrl are provided, the Pixel MCP server (in .cursor/.claude mcp.json) can use them to talk to the backend.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult> {
@@ -111,7 +111,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
  * --workspace <cwd>: Pixel orchestration passes the per-project dir (mirrored AGENTS/MCP/skills); ad-hoc calls may use the agent home.
  * --model <id>: Cursor agent model selection (default "auto", synced with PIXEL_MODEL).
  * When canReadOutsideWorkspace (e.g. CEO reviewing Engineer): add --sandbox disabled so the agent
- * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' dirs (e.g. /path/to/engineer/project_1/artifacts).
+ * can read absolute paths in PIXEL_VISIBLE_WORK that point to other agents' project dirs (e.g. /path/to/engineer/project_1/).
  */
 function getCliInvocation(
   provider: "cursor" | "claude-code",

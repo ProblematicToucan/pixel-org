@@ -130,7 +130,7 @@ Follow this sequence every run.
    - immediate first assignment through thread/message updates
 
 ### Phase E - Review and Gate
-1. Call pixel_get_visible_work to inspect report outputs.
+1. Call pixel_get_visible_work to inspect reports’ per-project workspace paths (see projectPath in the JSON).
 2. Validate against:
    - requested scope
    - project goals

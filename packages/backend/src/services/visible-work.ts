@@ -2,7 +2,7 @@ import fs from "fs";
 import { stat } from "fs/promises";
 import { eq, inArray } from "drizzle-orm";
 import { agents, projects } from "../db/schema.js";
-import { getAgentDir, getArtifactsDir } from "../storage/agents-fs.js";
+import { getAgentDir, getProjectDir } from "../storage/agents-fs.js";
 
 type Db = typeof import("../db/index.js").db;
 
@@ -67,7 +67,8 @@ function listProjectIdsForAgent(agent: { id: string; role: string }): string[] {
 export type LinkedProject = { id: string; name: string; slug: string };
 export type VisibleProject = {
   projectId: string;
-  artifactsPath: string;
+  /** Per-agent project workspace: `{agentDir}/{projectId}/` (repo, source, artifacts, etc.). */
+  projectPath: string;
   /** DB project when folder name matches `projects.id` or `projects.slug`. */
   linkedProject: LinkedProject | null;
 };
@@ -84,7 +85,7 @@ export type ProjectAgentWorkspace = {
   name: string;
   role: string;
   agentDir: string;
-  artifactsPath: string;
+  projectPath: string;
 };
 
 /** Map folder name (uuid or slug) → project summary for visible-work enrichment. */
@@ -110,7 +111,7 @@ async function buildProjectLookup(db: Db, folderNames: string[]): Promise<Map<st
 }
 
 /**
- * Agents that have `{storage}/{agentDir}/{projectId}/artifacts/` on disk for this DB project.
+ * Agents that have `{storage}/{agentDir}/{projectId}/` on disk for this DB project.
  * Folder name is the project UUID (or legacy slug folder).
  */
 export async function getAgentWorkspacesForProject(
@@ -126,16 +127,16 @@ export async function getAgentWorkspacesForProject(
 
   const entries = await Promise.all(
     allAgents.map(async (agent) => {
-      const artifactsPath = getArtifactsDir(agent, projectId);
+      const projectPath = getProjectDir(agent, projectId);
       try {
-        const s = await stat(artifactsPath);
+        const s = await stat(projectPath);
         if (!s.isDirectory()) return null;
         return {
           agentId: agent.id,
           name: agent.name,
           role: agent.role,
           agentDir: getAgentDir(agent),
-          artifactsPath,
+          projectPath,
         };
       } catch (err: unknown) {
         const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
@@ -149,7 +150,7 @@ export async function getAgentWorkspacesForProject(
 }
 
 /**
- * Work the given agent can "see": self + all reports' agent dirs and artifact paths.
+ * Work the given agent can "see": self + all reports' agent dirs and per-project workspace paths.
  * CEO sees everyone; CTO sees CTO + Engineer; Engineer sees only self.
  */
 export async function getVisibleWork(db: Db, agentId: string): Promise<VisibleAgentWork[]> {
@@ -161,7 +162,7 @@ export async function getVisibleWork(db: Db, agentId: string): Promise<VisibleAg
     const projectIds = listProjectIdsForAgent(agent);
     const agentProjects: VisibleProject[] = projectIds.map((pid) => ({
       projectId: pid,
-      artifactsPath: getArtifactsDir(agent, pid),
+      projectPath: getProjectDir(agent, pid),
       linkedProject: null,
     }));
 

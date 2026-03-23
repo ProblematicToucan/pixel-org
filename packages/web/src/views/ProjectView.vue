@@ -37,19 +37,19 @@ const artifactsFetched = ref(false);
 const artifactsRefreshing = ref(false);
 const artifactsRefreshError = ref<string | null>(null);
 const artifactsPanelRef = ref<HTMLDetailsElement | null>(null);
-const copiedArtifactId = ref<string | null>(null);
-let artifactCopyTimer: ReturnType<typeof setTimeout> | null = null;
+const copiedProjectPathAgentId = ref<string | null>(null);
+let projectPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Bumped when `projectId` changes or a new artifacts fetch starts; stale responses are ignored. */
 let artifactsRequestId = 0;
 
-async function copyArtifactPath(agentId: string, path: string) {
+async function copyProjectPath(agentId: string, path: string) {
   try {
     await navigator.clipboard.writeText(path);
-    copiedArtifactId.value = agentId;
-    if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
-    artifactCopyTimer = setTimeout(() => {
-      copiedArtifactId.value = null;
+    copiedProjectPathAgentId.value = agentId;
+    if (projectPathCopyTimer != null) clearTimeout(projectPathCopyTimer);
+    projectPathCopyTimer = setTimeout(() => {
+      copiedProjectPathAgentId.value = null;
     }, 1600);
   } catch {
     // clipboard unavailable
@@ -245,7 +245,7 @@ async function onThreadStatusChange(threadId: string, next: ThreadStatus) {
 onMounted(load);
 
 onUnmounted(() => {
-  if (artifactCopyTimer != null) clearTimeout(artifactCopyTimer);
+  if (projectPathCopyTimer != null) clearTimeout(projectPathCopyTimer);
 });
 </script>
 
@@ -294,8 +294,8 @@ onUnmounted(() => {
       <details ref="artifactsPanelRef" class="artifacts-panel" @toggle="onArtifactsToggle">
         <summary class="artifacts-summary">
           <span class="artifacts-summary-main">
-            <span class="artifacts-summary-title">Artifacts</span>
-            <span class="artifacts-summary-hint">Agents with outputs for this project</span>
+            <span class="artifacts-summary-title">Workspaces</span>
+            <span class="artifacts-summary-hint">Per-agent project directory for this project</span>
           </span>
           <span class="artifacts-chevron" aria-hidden="true" />
         </summary>
@@ -315,14 +315,14 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="workspace-copy"
-                  :title="'Copy artifact path: ' + ws.artifactsPath"
-                  @click="copyArtifactPath(ws.agentId, ws.artifactsPath)"
+                  :title="'Copy project path: ' + ws.projectPath"
+                  @click="copyProjectPath(ws.agentId, ws.projectPath)"
                 >
-                  {{ copiedArtifactId === ws.agentId ? "Copied" : "Copy path" }}
+                  {{ copiedProjectPathAgentId === ws.agentId ? "Copied" : "Copy path" }}
                 </button>
               </li>
             </ul>
-            <p v-else class="artifacts-empty">No agents with artifacts yet. Runs on this project create folders per agent.</p>
+            <p v-else class="artifacts-empty">No agent project folders yet. Runs on this project create a directory per agent.</p>
             <div class="artifacts-footer">
               <button
                 type="button"
