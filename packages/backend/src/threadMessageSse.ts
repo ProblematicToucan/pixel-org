@@ -20,8 +20,12 @@ export function subscribeThreadMessageStream(threadId: string, res: Response): (
   }
   listeners.add(res);
   return () => {
-    listeners!.delete(res);
-    if (listeners!.size === 0) {
+    const current = threadMessageStreams.get(threadId);
+    if (current !== listeners) {
+      return;
+    }
+    current.delete(res);
+    if (current.size === 0) {
       threadMessageStreams.delete(threadId);
     }
   };

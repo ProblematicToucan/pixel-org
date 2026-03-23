@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, lte, or, isNull } from "drizzle-orm";
 import { createCliSession, runAgent } from "@pixel-org/agent-runner";
 import type { RunAgentResult } from "@pixel-org/agent-runner";
-import { db, agents, projects, threads, messages, agentRunRequests } from "../db/index.js";
+import { db, agents, projects, threads, messages, agentRunRequests, approvalRequests } from "../db/index.js";
 import {
   ensureAgentProjectLayout,
   getAgentDir,
@@ -351,6 +351,24 @@ async function drainQueuedRequests(): Promise<void> {
   }
 }
 
+/** Cancel queued/running agent runs tied to an approval (e.g. requester cancelled the approval). */
+export async function cancelApprovalRunsForRequest(approvalRequestId: string): Promise<void> {
+  await db
+    .update(agentRunRequests)
+    .set({
+      status: "cancelled",
+      error: "Approval request cancelled",
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(agentRunRequests.approvalRequestId, approvalRequestId),
+        or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running"))
+      )
+    );
+}
+
 async function runQueuedRequest(requestId: string, claimedAgentId?: string): Promise<void> {
   const [request] = await db.select().from(agentRunRequests).where(eq(agentRunRequests.id, requestId)).limit(1);
   if (!request) {
@@ -359,6 +377,14 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       activeProcessCount = Math.max(0, activeProcessCount - 1);
       scheduleQueueDispatcher();
     }
+    return;
+  }
+
+  if (request.status === "cancelled") {
+    const ownerAgentId = claimedAgentId ?? request.agentId;
+    runningAgentIds.delete(ownerAgentId);
+    activeProcessCount = Math.max(0, activeProcessCount - 1);
+    scheduleQueueDispatcher();
     return;
   }
 
@@ -402,6 +428,30 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     activeProcessCount = Math.max(0, activeProcessCount - 1);
     scheduleQueueDispatcher();
     return;
+  }
+
+  if (request.reason === "approval_pending" && request.approvalRequestId) {
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, request.approvalRequestId))
+      .limit(1);
+    if (!ap || ap.status !== "pending") {
+      await db
+        .update(agentRunRequests)
+        .set({
+          status: "done",
+          error: null,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(agentRunRequests.id, request.id));
+      const ownerEarly = claimedAgentId ?? request.agentId;
+      runningAgentIds.delete(ownerEarly);
+      activeProcessCount = Math.max(0, activeProcessCount - 1);
+      scheduleQueueDispatcher();
+      return;
+    }
   }
 
   // Refresh agent workspace so latest MCP skill/template updates are present before each run.
@@ -514,7 +564,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       break;
     }
 
-    await db
+    const completionUpdate = await db
       .update(agentRunRequests)
       .set({
         status: result.success ? "done" : "failed",
@@ -529,35 +579,38 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(agentRunRequests.id, request.id));
+      .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")))
+      .returning();
 
-    const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
-    const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
-    const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
-    if (!hasAgentReply) {
-      const obj = fallbackObjectiveForRunReason(request.reason);
-      const fallback = result.success
-        ? [
-            "Status: Completed",
-            `Objective: ${obj}`,
-            "Actions:",
-            "- CLI run completed but no thread update was posted by agent.",
-            "- Added fallback update for audit continuity.",
-            "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
-          ].join("\n")
-        : [
-            "Status: Blocked",
-            `Objective: ${obj}`,
-            `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
-            formatAgentCliFailureForThread(result.stderr, result.exitCode),
-          ].join("\n");
-      await db.insert(messages).values({
-        threadId: request.threadId,
-        agentId: agent.id,
-        actorType: "agent",
-        actorName: agent.name,
-        content: fallback,
-      });
+    if (completionUpdate.length > 0) {
+      const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+      const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+      const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
+      if (!hasAgentReply) {
+        const obj = fallbackObjectiveForRunReason(request.reason);
+        const fallback = result.success
+          ? [
+              "Status: Completed",
+              `Objective: ${obj}`,
+              "Actions:",
+              "- CLI run completed but no thread update was posted by agent.",
+              "- Added fallback update for audit continuity.",
+              "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
+            ].join("\n")
+          : [
+              "Status: Blocked",
+              `Objective: ${obj}`,
+              `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+              formatAgentCliFailureForThread(result.stderr, result.exitCode),
+            ].join("\n");
+        await db.insert(messages).values({
+          threadId: request.threadId,
+          agentId: agent.id,
+          actorType: "agent",
+          actorName: agent.name,
+          content: fallback,
+        });
+      }
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : "Unknown orchestration error";
@@ -569,7 +622,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(agentRunRequests.id, request.id));
+      .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")));
     await enqueuePendingFollowupIfNeeded({
       threadId: request.threadId,
       projectId: request.projectId,

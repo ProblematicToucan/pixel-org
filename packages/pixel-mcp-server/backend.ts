@@ -253,12 +253,12 @@ export async function listApprovalRequests(options: {
 export async function resolveApprovalRequest(input: {
   approvalRequestId: string;
   decision: "approved" | "rejected";
-  resolutionNote?: string | null;
+  resolutionNote: string;
 }): Promise<{ success: boolean }> {
   return patch(`/approval-requests/${encodeURIComponent(input.approvalRequestId)}/resolve`, {
     resolverAgentId: agentId(),
     decision: input.decision,
-    resolutionNote: input.resolutionNote ?? null,
+    resolutionNote: input.resolutionNote.trim(),
   });
 }
 

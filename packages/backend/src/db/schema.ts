@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, boolean, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, pgTable, text, boolean, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
 /** UUID primary key for SQLite (no native UUID; store as text, generate in app). */
@@ -124,6 +124,16 @@ export const approvalRequests = pgTable(
       table.requesterAgentId,
       table.sourceThreadId,
       table.idempotencyKey
+    ),
+    approvalRequestsApproverStatusCreatedAtIdx: index("approval_requests_approver_status_created_at_idx").on(
+      table.approverAgentId,
+      table.status,
+      table.createdAt
+    ),
+    approvalRequestsRequesterStatusCreatedAtIdx: index("approval_requests_requester_status_created_at_idx").on(
+      table.requesterAgentId,
+      table.status,
+      table.createdAt
     ),
   })
 );

@@ -1,10 +1,61 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like } from "drizzle-orm";
 import { db, agents, approvalRequests, threads, messages } from "../db/index.js";
-import { enqueueApprovalPendingRun, enqueueThreadOwnerRunOnMessage } from "./orchestration.js";
+import {
+  cancelApprovalRunsForRequest,
+  enqueueApprovalPendingRun,
+  enqueueThreadOwnerRunOnMessage,
+} from "./orchestration.js";
 import { emitThreadMessage } from "../threadMessageSse.js";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+async function ensureApprovalSideEffects(
+  approval: typeof approvalRequests.$inferSelect
+): Promise<void> {
+  const [requester] = await db.select().from(agents).where(eq(agents.id, approval.requesterAgentId)).limit(1);
+  const [approver] = await db.select().from(agents).where(eq(agents.id, approval.approverAgentId)).limit(1);
+  if (!requester || !approver) {
+    return;
+  }
+
+  const prefix = `[Approval requested] id=${approval.id}`;
+  const [existingMsg] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.threadId, approval.sourceThreadId), like(messages.content, `${prefix}%`)))
+    .limit(1);
+
+  if (!existingMsg) {
+    const messageId = randomUUID();
+    const createdAtCreate = new Date();
+    const insertedCreate = {
+      id: messageId,
+      threadId: approval.sourceThreadId,
+      agentId: approval.requesterAgentId,
+      actorType: "agent" as const,
+      actorName: requester.name,
+      content: [
+        prefix,
+        `Summary: ${approval.summary}`,
+        `Approver: ${approver.name} (${approval.approverAgentId})`,
+      ].join("\n"),
+      createdAt: createdAtCreate,
+    };
+    await db.insert(messages).values(insertedCreate);
+    emitThreadMessage(approval.sourceThreadId, {
+      ...insertedCreate,
+      createdAt: createdAtCreate.toISOString(),
+    });
+  }
+
+  await enqueueApprovalPendingRun({
+    projectId: approval.projectId,
+    sourceThreadId: approval.sourceThreadId,
+    approverAgentId: approval.approverAgentId,
+    approvalRequestId: approval.id,
+  });
+}
 
 export async function createApprovalRequest(input: {
   requesterAgentId: string;
@@ -16,21 +67,6 @@ export async function createApprovalRequest(input: {
   idempotencyKey?: string | null;
 }): Promise<{ created: boolean; approval: typeof approvalRequests.$inferSelect }> {
   const idempotencyKey = String(input.idempotencyKey ?? randomUUID()).trim();
-
-  const [existing] = await db
-    .select()
-    .from(approvalRequests)
-    .where(
-      and(
-        eq(approvalRequests.requesterAgentId, input.requesterAgentId),
-        eq(approvalRequests.sourceThreadId, input.sourceThreadId),
-        eq(approvalRequests.idempotencyKey, idempotencyKey)
-      )
-    )
-    .limit(1);
-  if (existing) {
-    return { created: false, approval: existing };
-  }
 
   const [thread] = await db.select().from(threads).where(eq(threads.id, input.sourceThreadId)).limit(1);
   if (!thread) {
@@ -66,7 +102,7 @@ export async function createApprovalRequest(input: {
   }
 
   const id = randomUUID();
-  const [inserted] = await db
+  const insertedRows = await db
     .insert(approvalRequests)
     .values({
       id,
@@ -79,41 +115,39 @@ export async function createApprovalRequest(input: {
       idempotencyKey,
       metadata: input.metadata?.trim() || null,
     })
+    .onConflictDoNothing({
+      target: [approvalRequests.requesterAgentId, approvalRequests.sourceThreadId, approvalRequests.idempotencyKey],
+    })
     .returning();
 
-  if (!inserted) {
-    throw new Error("Failed to create approval request");
+  let approval: typeof approvalRequests.$inferSelect;
+  let created: boolean;
+
+  if (insertedRows.length > 0) {
+    approval = insertedRows[0]!;
+    created = true;
+  } else {
+    const [existing] = await db
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.requesterAgentId, input.requesterAgentId),
+          eq(approvalRequests.sourceThreadId, input.sourceThreadId),
+          eq(approvalRequests.idempotencyKey, idempotencyKey)
+        )
+      )
+      .limit(1);
+    if (!existing) {
+      throw new Error("Failed to create or load approval request");
+    }
+    approval = existing;
+    created = false;
   }
 
-  const messageId = randomUUID();
-  const createdAtCreate = new Date();
-  const insertedCreate = {
-    id: messageId,
-    threadId: input.sourceThreadId,
-    agentId: input.requesterAgentId,
-    actorType: "agent" as const,
-    actorName: requester.name,
-    content: [
-      `[Approval requested] id=${id}`,
-      `Summary: ${input.summary.trim()}`,
-      `Approver: ${approver.name} (${approverId})`,
-    ].join("\n"),
-    createdAt: createdAtCreate,
-  };
-  await db.insert(messages).values(insertedCreate);
-  emitThreadMessage(input.sourceThreadId, {
-    ...insertedCreate,
-    createdAt: createdAtCreate.toISOString(),
-  });
+  await ensureApprovalSideEffects(approval);
 
-  await enqueueApprovalPendingRun({
-    projectId: input.projectId,
-    sourceThreadId: input.sourceThreadId,
-    approverAgentId: approverId,
-    approvalRequestId: id,
-  });
-
-  return { created: true, approval: inserted };
+  return { created, approval };
 }
 
 export async function listApprovalRequestsForAgent(params: {
@@ -140,21 +174,11 @@ export async function resolveApprovalRequest(input: {
   approvalId: string;
   resolverAgentId: string;
   decision: "approved" | "rejected";
-  resolutionNote?: string | null;
+  resolutionNote: string;
 }): Promise<{ success: boolean }> {
-  const [row] = await db
-    .select()
-    .from(approvalRequests)
-    .where(eq(approvalRequests.id, input.approvalId))
-    .limit(1);
-  if (!row) {
-    throw new Error("Approval request not found");
-  }
-  if (row.status !== "pending") {
-    throw new Error("Approval is not pending");
-  }
-  if (row.approverAgentId !== input.resolverAgentId) {
-    throw new Error("Only the assigned approver can resolve this request");
+  const note = input.resolutionNote.trim();
+  if (!note) {
+    throw new Error("resolutionNote is required");
   }
 
   const [resolver] = await db.select().from(agents).where(eq(agents.id, input.resolverAgentId)).limit(1);
@@ -165,17 +189,30 @@ export async function resolveApprovalRequest(input: {
   const now = new Date();
   const newStatus: ApprovalStatus = input.decision === "approved" ? "approved" : "rejected";
 
-  await db
+  const updatedRows = await db
     .update(approvalRequests)
     .set({
       status: newStatus,
-      resolutionNote: input.resolutionNote?.trim() || null,
+      resolutionNote: note,
       resolvedAt: now,
     })
-    .where(eq(approvalRequests.id, input.approvalId));
+    .where(
+      and(
+        eq(approvalRequests.id, input.approvalId),
+        eq(approvalRequests.status, "pending"),
+        eq(approvalRequests.approverAgentId, input.resolverAgentId)
+      )
+    )
+    .returning();
+
+  if (updatedRows.length === 0) {
+    throw new Error("Approval already resolved or not authorized");
+  }
+
+  const row = updatedRows[0]!;
 
   const messageId = randomUUID();
-  const noteLine = input.resolutionNote?.trim() ? `Note: ${input.resolutionNote.trim()}` : "";
+  const noteLine = `Note: ${note}`;
   const createdAtResolve = new Date();
   const insertedResolve = {
     id: messageId,
@@ -183,7 +220,7 @@ export async function resolveApprovalRequest(input: {
     agentId: resolver.id,
     actorType: "agent" as const,
     actorName: resolver.name,
-    content: [`[Approval ${input.decision}] id=${row.id}`, noteLine].filter((l) => l !== "").join("\n"),
+    content: [`[Approval ${input.decision}] id=${row.id}`, noteLine].join("\n"),
     createdAt: createdAtResolve,
   };
   await db.insert(messages).values(insertedResolve);
@@ -208,28 +245,27 @@ export async function cancelApprovalRequest(input: {
   approvalId: string;
   requesterAgentId: string;
 }): Promise<{ success: boolean }> {
-  const [row] = await db
-    .select()
-    .from(approvalRequests)
-    .where(eq(approvalRequests.id, input.approvalId))
-    .limit(1);
-  if (!row) {
-    throw new Error("Approval request not found");
-  }
-  if (row.requesterAgentId !== input.requesterAgentId) {
-    throw new Error("Only the requester can cancel this approval");
-  }
-  if (row.status !== "pending") {
-    throw new Error("Only pending approvals can be cancelled");
-  }
-
-  await db
+  const updatedRows = await db
     .update(approvalRequests)
     .set({
       status: "cancelled",
       resolvedAt: new Date(),
     })
-    .where(eq(approvalRequests.id, input.approvalId));
+    .where(
+      and(
+        eq(approvalRequests.id, input.approvalId),
+        eq(approvalRequests.status, "pending"),
+        eq(approvalRequests.requesterAgentId, input.requesterAgentId)
+      )
+    )
+    .returning();
+
+  if (updatedRows.length === 0) {
+    throw new Error("Approval already resolved or not authorized to cancel");
+  }
+
+  const row = updatedRows[0]!;
+  await cancelApprovalRunsForRequest(row.id);
 
   return { success: true };
 }

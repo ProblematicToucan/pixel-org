@@ -497,7 +497,7 @@ export function createServer(): McpServer {
       inputSchema: z.object({
         approvalRequestId: z.string().describe("Approval request UUID"),
         decision: z.enum(["approved", "rejected"]),
-        resolutionNote: z.string().optional().describe("Short rationale"),
+        resolutionNote: z.string().trim().min(1).describe("Short rationale (required for audit)"),
       }),
     },
     async (args: {
@@ -507,9 +507,15 @@ export function createServer(): McpServer {
     }): Promise<CallToolResult> => {
       const id = args?.approvalRequestId ?? "";
       const decision = args?.decision;
-      if (!id || !decision) {
+      const resolutionNote = args?.resolutionNote?.trim() ?? "";
+      if (!id || !decision || !resolutionNote) {
         return {
-          content: [{ type: "text", text: "Error: approvalRequestId and decision are required" }],
+          content: [
+            {
+              type: "text",
+              text: "Error: approvalRequestId, decision, and non-empty resolutionNote are required",
+            },
+          ],
           isError: true,
         };
       }
@@ -517,7 +523,7 @@ export function createServer(): McpServer {
         const result = await backend.resolveApprovalRequest({
           approvalRequestId: id,
           decision,
-          resolutionNote: args?.resolutionNote ?? null,
+          resolutionNote,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {

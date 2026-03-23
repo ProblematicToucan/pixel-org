@@ -383,13 +383,34 @@ app.get(
         res.status(400).json({ error: "Invalid agent id" });
         return;
       }
-      const asRaw = typeof req.query.as === "string" ? req.query.as.trim().toLowerCase() : "approver";
-      const as = asRaw === "requester" ? "requester" : "approver";
-      const statusRaw = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : "";
+      const validAs = ["approver", "requester"] as const;
       const validStatuses = ["pending", "approved", "rejected", "cancelled"] as const;
-      const status = validStatuses.includes(statusRaw as (typeof validStatuses)[number])
-        ? (statusRaw as (typeof validStatuses)[number])
-        : undefined;
+
+      if (req.query.as !== undefined && req.query.as !== null && String(req.query.as).trim() !== "") {
+        const asRaw = String(req.query.as).trim().toLowerCase();
+        if (!validAs.includes(asRaw as (typeof validAs)[number])) {
+          res.status(400).json({ error: 'Query "as" must be approver or requester' });
+          return;
+        }
+      }
+
+      const asParam = typeof req.query.as === "string" ? req.query.as.trim().toLowerCase() : "";
+      const as: (typeof validAs)[number] = asParam === "requester" ? "requester" : "approver";
+
+      const statusParam =
+        typeof req.query.status === "string" && req.query.status.trim() !== ""
+          ? req.query.status.trim().toLowerCase()
+          : "";
+      if (statusParam !== "") {
+        if (!validStatuses.includes(statusParam as (typeof validStatuses)[number])) {
+          res.status(400).json({
+            error: `Query "status" must be one of: ${validStatuses.join(", ")}`,
+          });
+          return;
+        }
+      }
+      const status = statusParam === "" ? undefined : (statusParam as (typeof validStatuses)[number]);
+
       const rows = await listApprovalRequestsForAgent({ agentId: id, as, status });
       res.json(rows);
     } catch (err) {
@@ -464,12 +485,17 @@ app.patch(
         res.status(400).json({ error: "decision must be approved or rejected" });
         return;
       }
+      const note =
+        resolutionNote === undefined || resolutionNote === null ? "" : String(resolutionNote).trim();
+      if (!note) {
+        res.status(400).json({ error: "resolutionNote is required (non-empty rationale)" });
+        return;
+      }
       await resolveApprovalRequest({
         approvalId,
         resolverAgentId: String(resolverAgentId).trim(),
         decision: d,
-        resolutionNote:
-          resolutionNote === undefined || resolutionNote === null ? null : String(resolutionNote).trim(),
+        resolutionNote: note,
       });
       res.json({ success: true });
     } catch (err) {
@@ -477,7 +503,9 @@ app.patch(
       if (
         msg.includes("not found") ||
         msg.includes("not pending") ||
-        msg.includes("Only the assigned approver")
+        msg.includes("Only the assigned approver") ||
+        msg.includes("already resolved") ||
+        msg.includes("resolutionNote")
       ) {
         res.status(400).json({ error: msg });
         return;
@@ -507,7 +535,8 @@ app.patch(
       if (
         msg.includes("not found") ||
         msg.includes("Only the requester") ||
-        msg.includes("Only pending")
+        msg.includes("Only pending") ||
+        msg.includes("already resolved")
       ) {
         res.status(400).json({ error: msg });
         return;
