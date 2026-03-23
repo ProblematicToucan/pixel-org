@@ -139,6 +139,23 @@ function copyFileIfStale(src: string, dest: string): void {
   }
 }
 
+function copyDirRecursiveIfStale(srcDir: string, destDir: string): void {
+  if (!fs.existsSync(srcDir)) return;
+  ensureDir(destDir);
+  const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursiveIfStale(srcPath, destPath);
+      continue;
+    }
+    if (entry.isFile()) {
+      copyFileIfStale(srcPath, destPath);
+    }
+  }
+}
+
 /** Copy file content into workspace path so sandboxed CLIs do not depend on symlink targets outside workspace. */
 function syncFileIntoWorkspace(src: string, dest: string): void {
   if (!fs.existsSync(src)) return;
@@ -196,12 +213,25 @@ export function syncProjectWorkspaceSymlinks(
   const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
   const agentsMd = getAgentsMdPath(agent);
   const agentDotAgents = path.join(agentDir, ".agents");
+  const workspaceDotAgents = path.join(projectDir, ".agents");
 
   ensureSymlinkToTarget(agentsMd, path.join(projectDir, "AGENTS.md"), "file");
   // Keep MCP config as real files in the workspace so agent sandbox can load them.
   syncFileIntoWorkspace(cursorPath, path.join(projectDir, ".cursor", "mcp.json"));
   syncFileIntoWorkspace(claudePath, path.join(projectDir, ".claude", "mcp.json"));
-  ensureSymlinkToTarget(agentDotAgents, path.join(projectDir, ".agents"), "dir");
+  // Keep skills local to workspace; avoid directory symlink outside sandbox root.
+  if (fs.existsSync(workspaceDotAgents)) {
+    try {
+      const st = fs.lstatSync(workspaceDotAgents);
+      if (st.isSymbolicLink()) {
+        fs.rmSync(workspaceDotAgents, { recursive: true, force: true });
+      }
+    } catch {
+      // ignore and continue
+    }
+  }
+  ensureDir(workspaceDotAgents);
+  copyDirRecursiveIfStale(agentDotAgents, workspaceDotAgents);
 }
 
 /** Ensures project dir + artifacts/ + workspace symlinks (AGENTS.md, MCP, skills) for CLI `--workspace`. */
