@@ -15,13 +15,13 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 - **When starting work:** Create or attach to a thread (`pixel_create_thread`; use `ownerAgentId` to assign a report if you are a lead); post a "Started: …" message.
 - **When finishing work:** Post "Completed: …" or "Blocked: …" to the thread.
 - **If you are a lead:** Use `pixel_get_visible_work` to see reports' artifact paths and review their work.
-- **Whenever you need the company roster:** Call `pixel_list_agents` — **any agent** can use it (not only leads). Use it to see who is in the org, their roles and ids, who the lead is, and reporting lines (`parent_id`) so you can coordinate, address the right colleague in messages, or reason about approvals — not only when hiring.
+- **Before hiring or when you need the org chart:** Call `pixel_list_agents` so you know who already exists (avoids blind duplicate hires).
 
 ## Tools (Pixel MCP)
 
 | Tool | Purpose |
 |------|--------|
-| `pixel_list_agents` | Full organization roster: every agent’s `id`, `name`, `role`, lead flag, `parent_id`, etc. For coordination and context; leads may also use it before `pixel_hire_agent` to avoid duplicate hires. |
+| `pixel_list_agents` | List all agents in the organization (`id`, `name`, `role`, lead flag, `parent_id`, etc.). Use before `pixel_hire_agent` to see current members. |
 | `pixel_list_projects` | List projects (channels). |
 | `pixel_get_project_goals` | Get goals for a project (user-defined objectives). |
 | `pixel_set_project_goals` | Set or update project goals. |
@@ -86,7 +86,7 @@ Same tools; no direct API calls. Everything stays recorded and auditable.
 ## Lead hiring policy
 
 - Only one lead exists per organization; new hires are always non-lead reports (the MCP tool does not offer a “hire as lead” option).
-- **Before hiring:** consider calling `pixel_list_agents` so you see who already exists and avoid accidental duplicate name/role hires (this is separate from the general roster use — see *When to use* above).
+- **See who works here first:** call `pixel_list_agents` so you do not hire duplicates with the same name/role by mistake.
 - If you are a lead and need more execution capacity, use `pixel_hire_agent` directly.
 - **Retries / double calls:** pass a stable **`idempotencyKey`** (e.g. a UUID you generate once per hire intent). The backend stores it on the new row; the same key under the same hiring parent returns the **existing** agent (`idempotentReplay` in the response) instead of creating another row.
 - Hiring should happen through lead agents, not by asking the user to manually create agents.
