@@ -10,10 +10,10 @@ Invokes agent CLIs from the orchestrator. Sets `PIXEL_AGENT_ROLE` and optionally
 For `provider: "cursor"` we use the **Cursor Agent** CLI (`agent -h`):
 
 - **Command:** `agent`
-- **Workspace:** Pass `cwd` = the **agent’s own dir** (e.g. `~/.pixel-org/<uuid>-ceo/`). The CLI uses `--workspace <cwd>`, so that agent’s **MCP and skills** are loaded from that workspace (`.cursor/mcp.json` or `.claude/mcp.json`, plus `.agents/skills/`).
-- **Args:** `--print`, `--trust`, `-f`, `--workspace <cwd>`, `--model` &lt;id&gt; (from `model`, default `"auto"`; same value as `PIXEL_MODEL`), then the **task** as the prompt. If you pass **`visibleWork`** (e.g. for CEO to review Engineer), we add **`--sandbox disabled`** so the agent can **read paths outside its workspace** (the report’s artifact dirs, e.g. `~/.pixel-org/<uuid>-engineer/project_1/artifacts/`). Those paths in `PIXEL_VISIBLE_WORK` are **absolute**, so the CEO (running in `/path/to/ceo`) can read the Engineer’s work at `/path/to/engineer/project_1/artifacts`.
+- **Workspace:** Pass `cwd` = the **per-project workspace dir** (e.g. `~/.pixel-org/<uuid>-ceo/<project-id>/`). The backend mirrors `AGENTS.md`, MCP config, and `.agents` into that dir (symlinks to the agent home), then the CLI uses `--workspace <cwd>` so **MCP, skills, and shell cwd** align with the Pixel project folder. For ad-hoc runs without that layout, `cwd` can still be the agent’s own dir.
+- **Args:** `--print`, `--trust`, `-f`, `--workspace <cwd>`, `--model` &lt;id&gt; (from `model`, default `"auto"`; same value as `PIXEL_MODEL`), then the **task** as the prompt. If you pass **`visibleWork`** (e.g. for CEO to review Engineer), we add **`--sandbox disabled`** so the agent can **read paths outside its workspace** (the report’s artifact dirs, e.g. `~/.pixel-org/<uuid>-engineer/project_1/artifacts/`). Those paths in `PIXEL_VISIBLE_WORK` are **absolute**, so the CEO can read the Engineer’s work at those paths.
 
-Example CEO review run: `cwd` = CEO agent dir, `visibleWork` = from GET /agents/1/visible-work (includes Engineer’s artifact paths). Runner invokes: `agent --print --trust -f --workspace /path/to/ceo --model auto --sandbox disabled "Review…"`. The CEO loads MCP/skills from their dir and can read the Engineer’s paths from env.
+Example CEO review run: `cwd` = CEO’s project workspace dir, `visibleWork` = from GET /agents/1/visible-work. Runner invokes: `agent --print --trust -f --workspace <that-dir> --model auto --sandbox disabled "Review…"`.
 
 ## Troubleshooting: `HTTP 504`, `[unavailable]`, or exit code 1
 

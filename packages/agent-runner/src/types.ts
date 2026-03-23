@@ -27,7 +27,7 @@ export interface RunAgentOptions {
   role: string;
   /** Task or prompt to send to the agent */
   task: string;
-  /** Working directory for the agent (agent dir for MCP/skills). */
+  /** Working directory for the agent (`--workspace` + spawn cwd; Pixel orchestration uses per-project dir). */
   cwd?: string;
   /** Optional timeout in ms */
   timeoutMs?: number;
