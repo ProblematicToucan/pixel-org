@@ -139,6 +139,23 @@ function copyFileIfStale(src: string, dest: string): void {
   }
 }
 
+/** Copy file content into workspace path so sandboxed CLIs do not depend on symlink targets outside workspace. */
+function syncFileIntoWorkspace(src: string, dest: string): void {
+  if (!fs.existsSync(src)) return;
+  if (fs.existsSync(dest)) {
+    try {
+      const st = fs.lstatSync(dest);
+      if (st.isSymbolicLink()) {
+        fs.rmSync(dest, { force: true });
+      }
+    } catch {
+      // fall through
+    }
+  }
+  const content = fs.readFileSync(src, "utf-8");
+  writeFileUtf8IfChanged(dest, content);
+}
+
 /** Ensures agent dir + .cursor/.claude mcp.json + .agents/skills/. */
 export function ensureAgentDir(agent: { id: string; role: string }): string {
   const agentDir = getAgentDir(agent);
@@ -181,8 +198,9 @@ export function syncProjectWorkspaceSymlinks(
   const agentDotAgents = path.join(agentDir, ".agents");
 
   ensureSymlinkToTarget(agentsMd, path.join(projectDir, "AGENTS.md"), "file");
-  ensureSymlinkToTarget(cursorPath, path.join(projectDir, ".cursor", "mcp.json"), "file");
-  ensureSymlinkToTarget(claudePath, path.join(projectDir, ".claude", "mcp.json"), "file");
+  // Keep MCP config as real files in the workspace so agent sandbox can load them.
+  syncFileIntoWorkspace(cursorPath, path.join(projectDir, ".cursor", "mcp.json"));
+  syncFileIntoWorkspace(claudePath, path.join(projectDir, ".claude", "mcp.json"));
   ensureSymlinkToTarget(agentDotAgents, path.join(projectDir, ".agents"), "dir");
 }
 
