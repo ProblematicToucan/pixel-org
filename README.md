@@ -32,47 +32,36 @@ Setup details, database migrations, branching, and conventions are in [**CONTRIB
 
 ## Agent workspace storage
 
-By default, agent workspaces live under **`~/.pixel-org`** (not in this repo), so the agent CLI does not run git or write files in the monorepo root. One directory per agent; MCP and skills are **per agent** (shared across projects); each project dir holds **artifacts only**.
+By default, agent files live under **`~/.pixel-org`** (not in this repo), so orchestrated runs do not use the monorepo root as the Cursor workspace. Layout:
 
-Override with **`AGENTS_STORAGE_PATH`** (e.g. to use a folder inside this repo for development).
+- **Agent home** (`{id}-{role-slug}/`): canonical **`AGENTS.md`**, **`.cursor`/`.claude` `mcp.json`**, and **`.agents/skills/`** — one set per agent, updated when you save the agent in the app or on each orchestrated run.
+- **Per Pixel project** (`…/{agent}/{project-id}/`): the backend creates **`artifacts/`** for outputs and **symlinks** `AGENTS.md`, MCP config, and `.agents` from the agent home so the Cursor Agent CLI can use this folder as **`--workspace` and shell cwd** (local work and clones stay under the project path).
+
+Override the root with **`AGENTS_STORAGE_PATH`** (e.g. for local development).
 
 ### Layout
 
 ```text
 ~/.pixel-org/   # default; or $AGENTS_STORAGE_PATH
 ├── 1-ceo/
-│   ├── .cursor/
-│   │   ├── mcp.json          # MCP config for this agent (shared across projects)
-│   ├── .agents/
-│   │   └── skills/           # skills config for this agent (shared across projects)
-│   ├── project_1/
-│   │   └── artifacts/        # project 1 outputs
-│   └── project_2/
-│       └── artifacts/        # project 2 outputs
-├── 2-cto/
-│   ├── .cursor/
-│   │   ├── mcp.json
-│   ├── .agents/
-│   │   └── skills/
-│   └── project_1/
-│       └── artifacts/
+│   ├── AGENTS.md               # canonical persona (source for symlink below)
+│   ├── .cursor/mcp.json
+│   ├── .agents/skills/
+│   ├── <project-id>/           # Cursor --workspace + cwd for runs on this project
+│   │   ├── AGENTS.md -> ../../AGENTS.md
+│   │   ├── .cursor/mcp.json -> ../../.cursor/mcp.json
+│   │   ├── .agents -> ../../.agents
+│   │   └── artifacts/          # deliverables for this project
+│   └── <other-project-id>/
+│       └── ...
 ├── 3-engineer/
-│   ├── .cursor/
-│   │   ├── mcp.json
-│   ├── .agents/
-│   │   └── skills/
 │   └── ...
-└── 4-marketing/
-    ├── .cursor/
-    │   ├── mcp.json
-    ├── .agents/
-    │   └── skills/
-    └── ...
+└── ...
 ```
 
 - **Agent directory:** `{id}-{role-slug}` (e.g. `1-ceo`, `3-engineer`).
-- **At agent level:** `.cursor/mcp.json` (or `.claude/mcp.json`) and `.agents/skills/` – one set per agent, reused for all their projects. In `mcp.json`, set `PIXEL_BACKEND_URL` and `PIXEL_AGENT_ID`; optionally add **`OPENAI_API_KEY`** for Mem0 OSS memory tools (`pixel_get_context`, `pixel_store_memory`).
-- **Project directory:** only `artifacts/` – project = workspace for that agent’s outputs.
+- **Canonical MCP/skills:** under the agent home. In `mcp.json`, set `PIXEL_BACKEND_URL` and `PIXEL_AGENT_ID`; optionally add **`OPENAI_API_KEY`** for Mem0 OSS (`pixel_get_context`, `pixel_store_memory`).
+- **Project directory:** symlinks + **`artifacts/`**; orchestration also sets env **`PIXEL_PROJECT_WORKSPACE`** / **`PIXEL_PROJECT_ARTIFACTS`** on the CLI process.
 
 Override the root with env: `AGENTS_STORAGE_PATH=/path/to/parent` (agent dirs are created inside that path).
 
