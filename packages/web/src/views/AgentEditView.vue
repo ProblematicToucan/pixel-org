@@ -65,7 +65,7 @@ onMounted(load);
 <template>
   <div class="agent-edit-view">
     <h1>Edit agent</h1>
-    <p class="sub">Changes are saved to the backend and written to the agent home on disk (AGENTS.md, MCP, skills). Orchestrated runs symlink those into each project folder for the Cursor CLI.</p>
+    <p class="sub">Changes are saved to the backend and written to the agent home on disk (AGENTS.md, MCP, skills). Orchestrated runs prepare each project workspace with AGENTS.md symlink + local MCP/skills copies for the Cursor CLI.</p>
 
     <div v-if="loading" class="state">Loading…</div>
     <div v-else-if="error" class="state error">{{ error }}</div>

@@ -13,6 +13,7 @@ export {
   ensureDir,
   ensureAgentDir,
   ensureAgentProjectLayout,
+  syncProjectWorkspaceRuntimeFiles,
   syncProjectWorkspaceSymlinks,
   agentRoleToSlug,
   writeAgentsMd,
