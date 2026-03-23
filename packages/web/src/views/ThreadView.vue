@@ -164,6 +164,10 @@ function runPreview(content: string): string {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
+  const reasonCodeLine = lines.find((line) =>
+    line.toLowerCase().startsWith("reason code:")
+  );
+  if (reasonCodeLine) return reasonCodeLine;
   for (const line of lines) {
     const normalized = line.toLowerCase();
     if (
@@ -311,7 +315,7 @@ function startedInfoSummary(message: Message): string {
 function standaloneRunStatusLabel(message: Message): string | null {
   if (message.actorType !== "agent") return null;
   const normalized = parseStatus(message.content)?.trim().toLowerCase();
-  if (normalized === "in progress" || normalized === "completed") {
+  if (normalized === "in progress" || normalized === "completed" || normalized === "blocked") {
     return titleCaseStatus(normalized);
   }
   return null;

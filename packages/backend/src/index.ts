@@ -82,6 +82,19 @@ function buildProjectSlug(name: string): string {
   return `${base}-${randomText}-${randomNumber}`;
 }
 
+function parseTerminalOrProgressThreadStatusFromMessage(content: string): "in_progress" | "completed" | "blocked" | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("status:"));
+  if (!line) return null;
+  const normalized = line.slice("status:".length).trim().toLowerCase();
+  if (normalized === "in progress") return "in_progress";
+  if (normalized === "completed") return "completed";
+  if (normalized === "blocked") return "blocked";
+  return null;
+}
+
 function enrichAgentForResponse(agent: typeof agents.$inferSelect) {
   const { hireIdempotencyKey: _omit, ...rest } = agent;
   return {
@@ -1178,6 +1191,13 @@ app.post(
       createdAt,
     };
     await db.insert(messages).values(inserted);
+    // Keep work-item status aligned with owner-agent terminal/progress updates.
+    if (normalizedActorType === "agent" && normalizedAgentId === thread.agentId) {
+      const parsedStatus = parseTerminalOrProgressThreadStatusFromMessage(inserted.content);
+      if (parsedStatus && parsedStatus !== thread.status) {
+        await db.update(threads).set({ status: parsedStatus }).where(eq(threads.id, threadId));
+      }
+    }
     void enqueueThreadOwnerRunOnMessage({
       threadId,
       messageId,

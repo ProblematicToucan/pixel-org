@@ -419,23 +419,62 @@ export function createServer(): McpServer {
   server.registerTool(
     "pixel_post_message",
     {
-      description: "Post a message to a thread (record progress, reply, or feedback).",
+      description:
+        "Post a message to a thread (record progress, reply, or feedback). Prefer structured status posting: status + objective + actions for reliable orchestration parsing.",
       inputSchema: z.object({
         threadId: z.string().describe("Thread UUID"),
-        content: z.string().describe("Message content"),
+        content: z.string().optional().describe("Raw message content (legacy free-form path)"),
+        status: z
+          .enum(["started", "in_progress", "completed", "blocked"])
+          .optional()
+          .describe("Optional structured status token for orchestration-friendly updates"),
+        objective: z
+          .string()
+          .optional()
+          .describe("Optional objective line included as `Objective: ...` when using structured status"),
+        actions: z
+          .array(z.string())
+          .optional()
+          .describe("Optional action bullet lines included under `Actions:` when using structured status"),
+        reason: z
+          .string()
+          .optional()
+          .describe("Optional reason line included as `Reason: ...` when using structured status"),
       }),
     },
-    async (args: { threadId?: string; content?: string }): Promise<CallToolResult> => {
+    async (args: {
+      threadId?: string;
+      content?: string;
+      status?: "started" | "in_progress" | "completed" | "blocked";
+      objective?: string;
+      actions?: string[];
+      reason?: string;
+    }): Promise<CallToolResult> => {
       const threadId = args?.threadId ?? "";
-      const content = args?.content ?? "";
-      if (!threadId || content === undefined) {
+      const rawContent = typeof args?.content === "string" ? args.content : "";
+      const structuredStatus = args?.status;
+      const content =
+        structuredStatus == null
+          ? rawContent
+          : [
+              `Status: ${structuredStatus === "in_progress" ? "In Progress" : structuredStatus[0].toUpperCase() + structuredStatus.slice(1)}`,
+              args?.objective?.trim() ? `Objective: ${args.objective.trim()}` : null,
+              args?.actions && args.actions.length > 0
+                ? ["Actions:", ...args.actions.map((a) => `- ${a.trim()}`)].join("\n")
+                : null,
+              args?.reason?.trim() ? `Reason: ${args.reason.trim()}` : null,
+              rawContent.trim() ? rawContent.trim() : null,
+            ]
+              .filter((line): line is string => Boolean(line && line.trim()))
+              .join("\n");
+      if (!threadId || !content.trim()) {
         return {
-          content: [{ type: "text", text: "Error: threadId and content are required" }],
+          content: [{ type: "text", text: "Error: threadId and either content or structured status payload are required" }],
           isError: true,
         };
       }
       try {
-        await backend.postMessage(threadId, String(content));
+        await backend.postMessage(threadId, String(content).trim());
         return { content: [{ type: "text", text: "Message posted." }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

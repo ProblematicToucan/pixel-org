@@ -29,6 +29,95 @@ function fallbackObjectiveForRunReason(reason: string): string {
   }
 }
 
+type DeliveryContractFailureReason = "missing_agent_thread_update" | "missing_terminal_status_update";
+
+function parseStatusToken(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("status:"));
+  if (!line) return null;
+  const value = line.slice("status:".length).trim().toLowerCase();
+  return value || null;
+}
+
+function isStartedStatusToken(status: string | null): boolean {
+  return status === "started";
+}
+
+function isTerminalStatusToken(status: string | null): boolean {
+  return status === "completed" || status === "blocked";
+}
+
+function normalizeDeliveryContractReason(reason: DeliveryContractFailureReason): string {
+  return `contract_failure:${reason}`;
+}
+
+function isDeliveryContractFailure(error: string | null | undefined): boolean {
+  const value = (error ?? "").trim().toLowerCase();
+  return value.includes("contract_failure:missing_agent_thread_update");
+}
+
+function evaluateRunDeliveryContract(params: {
+  threadMessages: Array<typeof messages.$inferSelect>;
+  ownerAgentId: string;
+  runStartedAt: Date | null;
+  requireTerminalStatus: boolean;
+}): { passed: true } | { passed: false; reason: DeliveryContractFailureReason } {
+  const startedAtMs = params.runStartedAt ? new Date(params.runStartedAt).getTime() : 0;
+  const ownerUpdates = params.threadMessages.filter((m) => {
+    if (m.actorType !== "agent" || m.agentId !== params.ownerAgentId) return false;
+    if (new Date(m.createdAt).getTime() < startedAtMs) return false;
+    const status = parseStatusToken(m.content);
+    // Ignore orchestration informational start markers.
+    if (isStartedStatusToken(status)) return false;
+    return true;
+  });
+
+  if (ownerUpdates.length === 0) {
+    return { passed: false, reason: "missing_agent_thread_update" };
+  }
+
+  if (params.requireTerminalStatus) {
+    const hasTerminal = ownerUpdates.some((m) => isTerminalStatusToken(parseStatusToken(m.content)));
+    if (!hasTerminal) {
+      return { passed: false, reason: "missing_terminal_status_update" };
+    }
+  }
+
+  return { passed: true };
+}
+
+async function shouldThrottleAutomatedRunForContractFailure(params: {
+  threadId: string;
+  ownerAgentId: string;
+}): Promise<boolean> {
+  const runs = await db
+    .select()
+    .from(agentRunRequests)
+    .where(
+      and(
+        eq(agentRunRequests.threadId, params.threadId),
+        eq(agentRunRequests.agentId, params.ownerAgentId)
+      )
+    );
+  if (runs.length === 0) return false;
+  const latest = [...runs].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  )[0];
+  if (latest.status !== "failed" || !isDeliveryContractFailure(latest.error)) return false;
+
+  const anchor = latest.finishedAt ?? latest.updatedAt;
+  const anchorMs = new Date(anchor).getTime();
+  const threadMessages = await db.select().from(messages).where(eq(messages.threadId, params.threadId));
+  const hasForeignMessageSinceFailure = threadMessages.some((m) => {
+    if (new Date(m.createdAt).getTime() <= anchorMs) return false;
+    if (m.actorType === "board") return true;
+    return m.agentId !== params.ownerAgentId;
+  });
+  return !hasForeignMessageSinceFailure;
+}
+
 /** Builds the headless CLI task string; `continuationMode` toggles strict vs optional `pixel_get_context`. */
 function buildOrchestrationAgentTask(params: {
   reason: "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending";
@@ -561,11 +650,28 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       break;
     }
 
+    const msgsAfterRun = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+    const contractResult = result.success
+      ? evaluateRunDeliveryContract({
+          threadMessages: msgsAfterRun,
+          ownerAgentId: agent.id,
+          runStartedAt: request.startedAt ?? null,
+          requireTerminalStatus: true,
+        })
+      : { passed: true as const };
+    const completionStatus = result.success && contractResult.passed ? "done" : "failed";
+    const completionError =
+      completionStatus === "done"
+        ? null
+        : result.success && !contractResult.passed
+          ? normalizeDeliveryContractReason(contractResult.reason)
+          : (result.stderr || "Agent run failed");
+
     const completionUpdate = await db
       .update(agentRunRequests)
       .set({
-        status: result.success ? "done" : "failed",
-        error: result.success ? null : (result.stderr || "Agent run failed"),
+        status: completionStatus,
+        error: completionError,
         pid: result.pid ?? null,
         command: result.command ?? null,
         args: result.args ? JSON.stringify(result.args) : null,
@@ -580,20 +686,27 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       .returning();
 
     if (completionUpdate.length > 0) {
-      const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
-      const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+      const agentMessageCount = msgsAfterRun.filter((m) => m.agentId === agent.id).length;
       const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
       if (!hasAgentReply) {
         const obj = fallbackObjectiveForRunReason(request.reason);
-        const fallback = result.success
-          ? [
-              "Status: Completed",
-              `Objective: ${obj}`,
-              "Actions:",
-              "- CLI run completed but no thread update was posted by agent.",
-              "- Added fallback update for audit continuity.",
-              "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
-            ].join("\n")
+        const fallback =
+          result.success && !contractResult.passed
+            ? [
+                "Status: Blocked",
+                `Objective: ${obj}`,
+                `Reason code: ${contractResult.reason}`,
+                "Reason: Run failed strict completion contract; required owner-agent thread output missing.",
+                "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
+              ].join("\n")
+            : result.success
+              ? [
+                  "Status: Blocked",
+                  `Objective: ${obj}`,
+                  "Reason code: missing_agent_thread_update",
+                  "Reason: Run completed but owner-agent thread update was missing.",
+                  "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
+                ].join("\n")
           : [
               "Status: Blocked",
               `Objective: ${obj}`,
@@ -778,6 +891,14 @@ export async function enqueueThreadOwnerRunOnMessage(params: {
     )
     .limit(1);
   if (activeForOwner) return;
+  if (
+    await shouldThrottleAutomatedRunForContractFailure({
+      threadId: thread.id,
+      ownerAgentId: thread.agentId,
+    })
+  ) {
+    return;
+  }
 
   const idempotencyKey = `thread_message:${thread.projectId}:${thread.id}:${params.messageId}:${thread.agentId}`;
   await enqueueRun({
@@ -914,6 +1035,14 @@ async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
   const nonTerminal = prioritized.find((x) => x.latest && !isTerminalStatus(x.latest.content));
   const target = nonTerminal ?? prioritized[0];
   if (!target) return 0;
+  if (
+    await shouldThrottleAutomatedRunForContractFailure({
+      threadId: target.thread.id,
+      ownerAgentId: agentId,
+    })
+  ) {
+    return 0;
+  }
 
   const marker = target.latest?.id ?? "no-message";
   const idempotencyKey = `awake:${agentId}:${target.thread.id}:${marker}:${Math.floor(Date.now() / 60000)}`;
