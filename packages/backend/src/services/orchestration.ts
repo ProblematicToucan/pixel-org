@@ -351,7 +351,10 @@ async function drainQueuedRequests(): Promise<void> {
   }
 }
 
-/** Cancel queued/running agent runs tied to an approval (e.g. requester cancelled the approval). */
+/**
+ * Drop queued approval_pending runs for this approval id.
+ * Does not mark `running` rows (CLI may still be active); those exit early when approval is no longer pending.
+ */
 export async function cancelApprovalRunsForRequest(approvalRequestId: string): Promise<void> {
   await db
     .update(agentRunRequests)
@@ -364,7 +367,7 @@ export async function cancelApprovalRunsForRequest(approvalRequestId: string): P
     .where(
       and(
         eq(agentRunRequests.approvalRequestId, approvalRequestId),
-        or(eq(agentRunRequests.status, "queued"), eq(agentRunRequests.status, "running"))
+        eq(agentRunRequests.status, "queued")
       )
     );
 }
@@ -445,7 +448,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
           finishedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(agentRunRequests.id, request.id));
+        .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")));
       const ownerEarly = claimedAgentId ?? request.agentId;
       runningAgentIds.delete(ownerEarly);
       activeProcessCount = Math.max(0, activeProcessCount - 1);
@@ -656,27 +659,26 @@ async function enqueueRun(params: {
   idempotencyKey: string;
   approvalRequestId?: string | null;
 }): Promise<void> {
-  const [existing] = await db
-    .select()
-    .from(agentRunRequests)
-    .where(eq(agentRunRequests.idempotencyKey, params.idempotencyKey))
-    .limit(1);
-  if (existing) return;
-
   const requestId = randomUUID();
-  await db.insert(agentRunRequests).values({
-    id: requestId,
-    projectId: params.projectId,
-    threadId: params.threadId,
-    agentId: params.agentId,
-    reason: params.reason,
-    model: "auto",
-    idempotencyKey: params.idempotencyKey,
-    status: "queued",
-    approvalRequestId: params.approvalRequestId ?? null,
-  });
+  const inserted = await db
+    .insert(agentRunRequests)
+    .values({
+      id: requestId,
+      projectId: params.projectId,
+      threadId: params.threadId,
+      agentId: params.agentId,
+      reason: params.reason,
+      model: "auto",
+      idempotencyKey: params.idempotencyKey,
+      status: "queued",
+      approvalRequestId: params.approvalRequestId ?? null,
+    })
+    .onConflictDoNothing({ target: agentRunRequests.idempotencyKey })
+    .returning();
 
-  scheduleQueueDispatcher();
+  if (inserted.length > 0) {
+    scheduleQueueDispatcher();
+  }
 }
 
 /** Enqueue the approver agent to process a pending approval (durable inbox + wake). */

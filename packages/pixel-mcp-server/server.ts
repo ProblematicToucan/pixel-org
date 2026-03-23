@@ -15,6 +15,11 @@ import { addMemory, isMemoryConfigured, mem0UserId, type StoreMemoryCategory } f
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** When false, `pixel_cancel_approval_request` is not registered (set PIXEL_ENABLE_CANCEL_APPROVAL=false to disable). */
+const PIXEL_CANCEL_APPROVAL_ENABLED =
+  process.env.PIXEL_ENABLE_CANCEL_APPROVAL !== "false" &&
+  process.env.PIXEL_ENABLE_CANCEL_APPROVAL !== "0";
+
 function getDistDir(): string {
   return __dirname.endsWith("dist") ? __dirname : path.join(__dirname, "dist");
 }
@@ -533,28 +538,30 @@ export function createServer(): McpServer {
     }
   );
 
-  server.registerTool(
-    "pixel_cancel_approval_request",
-    {
-      description: "Cancel a pending approval request (requester only).",
-      inputSchema: z.object({
-        approvalRequestId: z.string().describe("Approval request UUID"),
-      }),
-    },
-    async (args: { approvalRequestId?: string }): Promise<CallToolResult> => {
-      const id = args?.approvalRequestId ?? "";
-      if (!id) {
-        return { content: [{ type: "text", text: "Error: approvalRequestId is required" }], isError: true };
+  if (PIXEL_CANCEL_APPROVAL_ENABLED) {
+    server.registerTool(
+      "pixel_cancel_approval_request",
+      {
+        description: "Cancel a pending approval request (requester only).",
+        inputSchema: z.object({
+          approvalRequestId: z.string().describe("Approval request UUID"),
+        }),
+      },
+      async (args: { approvalRequestId?: string }): Promise<CallToolResult> => {
+        const id = args?.approvalRequestId ?? "";
+        if (!id) {
+          return { content: [{ type: "text", text: "Error: approvalRequestId is required" }], isError: true };
+        }
+        try {
+          const result = await backend.cancelApprovalRequest(id);
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+        }
       }
-      try {
-        const result = await backend.cancelApprovalRequest(id);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
-      }
-    }
-  );
+    );
+  }
 
   server.registerTool(
     "pixel_get_context",

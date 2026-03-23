@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, agents, approvalRequests, threads, messages } from "../db/index.js";
 import {
   cancelApprovalRunsForRequest,
@@ -20,29 +20,29 @@ async function ensureApprovalSideEffects(
   }
 
   const prefix = `[Approval requested] id=${approval.id}`;
-  const [existingMsg] = await db
-    .select({ id: messages.id })
-    .from(messages)
-    .where(and(eq(messages.threadId, approval.sourceThreadId), like(messages.content, `${prefix}%`)))
-    .limit(1);
+  const auditMessageId = `approval-requested:${approval.id}`;
+  const createdAtCreate = new Date();
+  const insertedCreate = {
+    id: auditMessageId,
+    threadId: approval.sourceThreadId,
+    agentId: approval.requesterAgentId,
+    actorType: "agent" as const,
+    actorName: requester.name,
+    content: [
+      prefix,
+      `Summary: ${approval.summary}`,
+      `Approver: ${approver.name} (${approval.approverAgentId})`,
+    ].join("\n"),
+    createdAt: createdAtCreate,
+  };
 
-  if (!existingMsg) {
-    const messageId = randomUUID();
-    const createdAtCreate = new Date();
-    const insertedCreate = {
-      id: messageId,
-      threadId: approval.sourceThreadId,
-      agentId: approval.requesterAgentId,
-      actorType: "agent" as const,
-      actorName: requester.name,
-      content: [
-        prefix,
-        `Summary: ${approval.summary}`,
-        `Approver: ${approver.name} (${approval.approverAgentId})`,
-      ].join("\n"),
-      createdAt: createdAtCreate,
-    };
-    await db.insert(messages).values(insertedCreate);
+  const insertedAudit = await db
+    .insert(messages)
+    .values(insertedCreate)
+    .onConflictDoNothing({ target: messages.id })
+    .returning();
+
+  if (insertedAudit.length > 0) {
     emitThreadMessage(approval.sourceThreadId, {
       ...insertedCreate,
       createdAt: createdAtCreate.toISOString(),
@@ -266,6 +266,38 @@ export async function cancelApprovalRequest(input: {
 
   const row = updatedRows[0]!;
   await cancelApprovalRunsForRequest(row.id);
+
+  const [requesterForCancel] = await db
+    .select()
+    .from(agents)
+    .where(eq(agents.id, row.requesterAgentId))
+    .limit(1);
+  const cancelMessageId = `approval-cancelled:${row.id}`;
+  const createdAtCancel = new Date();
+  const insertedCancel = {
+    id: cancelMessageId,
+    threadId: row.sourceThreadId,
+    agentId: row.requesterAgentId,
+    actorType: "agent" as const,
+    actorName: requesterForCancel?.name ?? "Agent",
+    content: [`[Approval cancelled] id=${row.id}`, `Status: cancelled`, `Resolved at: ${createdAtCancel.toISOString()}`].join(
+      "\n"
+    ),
+    createdAt: createdAtCancel,
+  };
+
+  const insertedCancelRows = await db
+    .insert(messages)
+    .values(insertedCancel)
+    .onConflictDoNothing({ target: messages.id })
+    .returning();
+
+  if (insertedCancelRows.length > 0) {
+    emitThreadMessage(row.sourceThreadId, {
+      ...insertedCancel,
+      createdAt: createdAtCancel.toISOString(),
+    });
+  }
 
   return { success: true };
 }

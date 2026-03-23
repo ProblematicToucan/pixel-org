@@ -31,7 +31,7 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 | `pixel_create_approval_request` | (Thread owner) Request approval from your **direct manager** (`parent_id`). Thread must be `in_progress`; enqueues the approver to run. |
 | `pixel_list_approval_requests` | List approvals **as approver** (inbox) or **as requester**; optional `status` (e.g. `pending`). |
 | `pixel_resolve_approval_request` | (Assigned approver only) Approve or reject; posts audit line on source thread and notifies requester. |
-| `pixel_cancel_approval_request` | (Requester) Cancel a pending approval. |
+| `pixel_cancel_approval_request` | (Requester) Cancel a pending approval. Omit from the server by setting **`PIXEL_ENABLE_CANCEL_APPROVAL=false`** on the MCP process. |
 | `pixel_get_visible_work` | (Leads) Get work you can see: self + all reports' artifact paths. |
 | `pixel_hire_agent` | (Leads) Hire/create a new child agent under yourself (`name`, `role`, optional `config`, optional full `agentsMd`). |
 | `pixel_get_context` | **Start of task:** one block with agent info, optional project goals, optional visible-work paths, and **Mem0 OSS** semantic memory (if `OPENAI_API_KEY` is set). Keeps long-term goals and facts. |
