@@ -39,6 +39,11 @@ import fs from "node:fs";
 import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
 import { HttpError } from "./httpError.js";
+import {
+  normalizeRunId,
+  parseRunStatusToken,
+  validateThreadMessageRunContract,
+} from "./services/thread-message-contract.js";
 import { reportErrorToHealer } from "./healerClient.js";
 import { emitThreadMessage, subscribeThreadMessageStream } from "./threadMessageSse.js";
 
@@ -1123,14 +1128,8 @@ app.post(
     try {
     const threadId = routeParam(req, "id");
     const { agentId, content, actorType, actorName, runId, runStatus } = req.body;
-    const normalizedRunId = typeof runId === "string" ? runId.trim() : "";
-    const normalizedRunStatusRaw = typeof runStatus === "string" ? runStatus.trim().toLowerCase() : "";
-    const normalizedRunStatus =
-      normalizedRunStatusRaw === "started" ||
-      normalizedRunStatusRaw === "in_progress" ||
-      normalizedRunStatusRaw === "completed"
-        ? (normalizedRunStatusRaw as "started" | "in_progress" | "completed")
-        : null;
+    const normalizedRunId = normalizeRunId(runId);
+    const normalizedRunStatus = parseRunStatusToken(runStatus);
     let normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
     let normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
     let normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
@@ -1150,10 +1149,6 @@ app.post(
       res.status(400).json({ error: "runId must be non-empty when provided" });
       return;
     }
-    if (normalizedRunStatus != null && !normalizedRunId) {
-      res.status(400).json({ error: "runId is required when runStatus is provided" });
-      return;
-    }
     const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
     if (!thread) {
       res.status(404).json({ error: "Thread not found" });
@@ -1170,6 +1165,15 @@ app.post(
       normalizedActorType = "agent";
       normalizedAgentId = thread.agentId;
       normalizedActorName = owner.name;
+    }
+    const contractResult = validateThreadMessageRunContract({
+      actorType: normalizedActorType as "agent" | "board",
+      runId: normalizedRunId,
+      runStatus: normalizedRunStatus,
+    });
+    if (!contractResult.ok) {
+      res.status(400).json({ error: contractResult.error });
+      return;
     }
     if (normalizedActorType === "agent" && !normalizedAgentId) {
       res.status(400).json({ error: "agentId is required when actorType is agent" });
