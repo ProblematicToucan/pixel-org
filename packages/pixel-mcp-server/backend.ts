@@ -100,13 +100,25 @@ export async function getAgent(id: string): Promise<AgentRow> {
   return get<AgentRow>(`/agents/${encodeURIComponent(id)}`);
 }
 
+/** All organization agents (roster), same order as the web app: lead first, then by name. */
+export async function listAgents(): Promise<(AgentRow & { configDisplay?: string | null })[]> {
+  return get<(AgentRow & { configDisplay?: string | null })[]>("/agents");
+}
+
 export async function hireAgent(input: {
   name: string;
   role: string;
   type?: string;
   config?: string | null;
   agentsMd?: string | null;
-}): Promise<{ success: boolean; hiredBy: string; agent: AgentRow & { configDisplay?: string | null } }> {
+  /** Optional: same key + same hiring parent returns the existing hire (safe retries). */
+  idempotencyKey?: string | null;
+}): Promise<{
+  success: boolean;
+  hiredBy: string;
+  idempotentReplay?: boolean;
+  agent: AgentRow & { configDisplay?: string | null };
+}> {
   return post("/agents/hire", {
     requesterAgentId: agentId(),
     name: input.name,
@@ -114,6 +126,7 @@ export async function hireAgent(input: {
     type: input.type ?? "cursor",
     config: input.config ?? null,
     agentsMd: input.agentsMd ?? null,
+    idempotencyKey: input.idempotencyKey ?? null,
   });
 }
 

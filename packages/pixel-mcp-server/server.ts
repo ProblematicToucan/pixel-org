@@ -69,6 +69,13 @@ export function createServer(): McpServer {
           .nullable()
           .optional()
           .describe("Optional full AGENTS.md content. If provided, replaces the default generated template."),
+        idempotencyKey: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            "Optional stable key for this hire intent (e.g. UUID). Reusing the same key returns the existing agent instead of creating a duplicate."
+          ),
       }),
     },
     async (args: {
@@ -77,6 +84,7 @@ export function createServer(): McpServer {
       type?: string;
       config?: string | null;
       agentsMd?: string | null;
+      idempotencyKey?: string | null;
     }): Promise<CallToolResult> => {
       const name = args?.name ?? "";
       const role = args?.role ?? "";
@@ -93,16 +101,40 @@ export function createServer(): McpServer {
           type: args?.type?.trim() || "cursor",
           config: args?.config ?? null,
           agentsMd: args?.agentsMd ?? null,
+          idempotencyKey: args?.idempotencyKey?.trim() || null,
         });
+        const replay =
+          result.idempotentReplay === true
+            ? " (idempotent replay — this key was already used for a hire)"
+            : "";
         return {
           content: [
             {
               type: "text",
-              text: `Hired agent "${result.agent.name}" (${result.agent.role}) with id ${result.agent.id}.`,
+              text: `Hired agent "${result.agent.name}" (${result.agent.role}) with id ${result.agent.id}.${replay}`,
             },
           ],
           structuredContent: result,
         };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "pixel_list_agents",
+    {
+      description:
+        "List all agents in the organization (id, name, role, lead flag, parent id, config display). Use for the company roster: who works here, roles, reporting lines, and agent ids for coordination or threads — not only for hiring.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      try {
+        const list = await backend.listAgents();
+        const text = JSON.stringify(list, null, 2);
+        return { content: [{ type: "text", text }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };

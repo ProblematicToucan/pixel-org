@@ -1,0 +1,2 @@
+ALTER TABLE "agents" ADD COLUMN "hire_idempotency_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "agents_parent_hire_idempotency_unique" ON "agents" USING btree ("parent_id","hire_idempotency_key") WHERE "agents"."hire_idempotency_key" is not null;

@@ -83,8 +83,9 @@ function buildProjectSlug(name: string): string {
 }
 
 function enrichAgentForResponse(agent: typeof agents.$inferSelect) {
+  const { hireIdempotencyKey: _omit, ...rest } = agent;
   return {
-    ...agent,
+    ...rest,
     configDisplay: readAgentConfigDisplay({
       id: agent.id,
       role: agent.role,
@@ -156,20 +157,25 @@ app.get(
  * Hiring endpoint: only the single organization lead may hire.
  * New agents are always non-leads (parentId = requester unless overridden; still must be requester).
  */
+const HIRE_IDEMPOTENCY_KEY_MAX_LEN = 256;
+
 app.post(
   "/agents/hire",
   asyncHandler(async (req, res) => {
     try {
-    const { requesterAgentId, name, role, type, isLead, config, parentId, agentsMd } = req.body as {
-      requesterAgentId?: string;
-      name?: string;
-      role?: string;
-      type?: string;
-      isLead?: boolean;
-      config?: string | null;
-      parentId?: string | null;
-      agentsMd?: string | null;
-    };
+    const { requesterAgentId, name, role, type, isLead, config, parentId, agentsMd, idempotencyKey } =
+      req.body as {
+        requesterAgentId?: string;
+        name?: string;
+        role?: string;
+        type?: string;
+        isLead?: boolean;
+        config?: string | null;
+        parentId?: string | null;
+        agentsMd?: string | null;
+        /** Same key + same hiring parent returns the first hired agent (retries / double-submit). */
+        idempotencyKey?: string | null;
+      };
 
     const requesterId = String(requesterAgentId ?? "").trim();
     if (!requesterId) {
@@ -227,16 +233,89 @@ app.post(
       return;
     }
 
+    const cleanIdempotencyKey =
+      idempotencyKey === undefined || idempotencyKey === null || String(idempotencyKey).trim() === ""
+        ? null
+        : String(idempotencyKey).trim();
+    if (cleanIdempotencyKey && cleanIdempotencyKey.length > HIRE_IDEMPOTENCY_KEY_MAX_LEN) {
+      res.status(400).json({
+        error: `idempotencyKey must be at most ${HIRE_IDEMPOTENCY_KEY_MAX_LEN} characters`,
+      });
+      return;
+    }
+
+    if (cleanIdempotencyKey) {
+      const [existingByKey] = await db
+        .select()
+        .from(agents)
+        .where(
+          and(
+            eq(agents.parentId, normalizedParentId),
+            eq(agents.hireIdempotencyKey, cleanIdempotencyKey)
+          )
+        )
+        .limit(1);
+      if (existingByKey) {
+        provisionAgentWorkspace({
+          id: existingByKey.id,
+          name: existingByKey.name,
+          role: existingByKey.role,
+          config: existingByKey.config,
+        });
+        const [finalExisting] = await db.select().from(agents).where(eq(agents.id, existingByKey.id)).limit(1);
+        res.status(200).json({
+          success: true,
+          hiredBy: requester.id,
+          idempotentReplay: true,
+          agent: enrichAgentForResponse(finalExisting ?? existingByKey),
+        });
+        return;
+      }
+    }
+
     const newAgentId = randomUUID();
-    await db.insert(agents).values({
-      id: newAgentId,
-      name: cleanName,
-      type: cleanType,
-      role: cleanRole,
-      isLead: false,
-      parentId: normalizedParentId,
-      config: cleanConfig,
-    });
+    try {
+      await db.insert(agents).values({
+        id: newAgentId,
+        name: cleanName,
+        type: cleanType,
+        role: cleanRole,
+        isLead: false,
+        parentId: normalizedParentId,
+        config: cleanConfig,
+        hireIdempotencyKey: cleanIdempotencyKey,
+      });
+    } catch (insertErr) {
+      if (isPostgresUniqueViolation(insertErr) && cleanIdempotencyKey) {
+        const [raced] = await db
+          .select()
+          .from(agents)
+          .where(
+            and(
+              eq(agents.parentId, normalizedParentId),
+              eq(agents.hireIdempotencyKey, cleanIdempotencyKey)
+            )
+          )
+          .limit(1);
+        if (raced) {
+          provisionAgentWorkspace({
+            id: raced.id,
+            name: raced.name,
+            role: raced.role,
+            config: raced.config,
+          });
+          const [finalRaced] = await db.select().from(agents).where(eq(agents.id, raced.id)).limit(1);
+          res.status(200).json({
+            success: true,
+            hiredBy: requester.id,
+            idempotentReplay: true,
+            agent: enrichAgentForResponse(finalRaced ?? raced),
+          });
+          return;
+        }
+      }
+      throw insertErr;
+    }
 
     const [created] = await db.select().from(agents).where(eq(agents.id, newAgentId)).limit(1);
     if (!created) {
@@ -265,6 +344,7 @@ app.post(
     res.status(201).json({
       success: true,
       hiredBy: requester.id,
+      idempotentReplay: false,
       agent: finalCreated ? enrichAgentForResponse(finalCreated) : enrichAgentForResponse(created),
     });
     } catch (err) {

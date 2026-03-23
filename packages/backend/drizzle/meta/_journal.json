@@ -50,6 +50,13 @@
       "when": 1774225446042,
       "tag": "0006_unusual_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774240984321,
+      "tag": "0007_dear_jack_murdock",
+      "breakpoints": true
     }
   ]
 }
