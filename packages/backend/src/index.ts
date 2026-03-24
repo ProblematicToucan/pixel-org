@@ -13,8 +13,13 @@ import { db, agents, projects, threads, messages, agentRunRequests } from "./db/
 import {
   getVisibleWork,
   getAgentWorkspacesForProject,
-  canAssignThreadOwner,
 } from "./services/visible-work.js";
+import {
+  evaluateMessagePosting,
+  evaluateThreadCreation,
+  evaluateThreadStatusChange,
+  normalizeThreadTaskType,
+} from "./services/governance-policy.js";
 import {
   cancelApprovalRequest,
   createApprovalRequest,
@@ -34,11 +39,16 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import fs from "node:fs";
 import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
 import { HttpError } from "./httpError.js";
+import {
+  normalizeRunId,
+  parseRunStatusToken,
+  validateThreadMessageRunContract,
+} from "./services/thread-message-contract.js";
 import { reportErrorToHealer } from "./healerClient.js";
 import { emitThreadMessage, subscribeThreadMessageStream } from "./threadMessageSse.js";
 
@@ -110,6 +120,21 @@ async function syncAgentConfigPointers(): Promise<void> {
         .set({ config: pointer, updatedAt: new Date() })
         .where(eq(agents.id, row.id));
     }
+  }
+}
+
+async function assertSchemaReady(): Promise<void> {
+  const result = await db.execute(sql`
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'threads' AND column_name = 'task_type'
+    LIMIT 1
+  `);
+  const rows = (result as { rows?: unknown[] }).rows ?? [];
+  if (rows.length === 0) {
+    throw new Error(
+      "Database schema is missing threads.task_type. Run migrations before starting backend (pnpm --filter @pixel-org/backend db:migrate)."
+    );
   }
 }
 
@@ -847,11 +872,12 @@ app.post(
   asyncHandler(async (req, res) => {
     try {
     const projectId = routeParam(req, "id");
-    const { agentId, title, requesterAgentId, status } = req.body as {
+    const { agentId, title, requesterAgentId, status, taskType } = req.body as {
       agentId?: string;
       title?: string | null;
       requesterAgentId?: string | null;
       status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
+      taskType?: string | null;
     };
     if (!projectId || agentId == null) {
       res.status(400).json({ error: "project id and agentId required" });
@@ -860,25 +886,27 @@ app.post(
     const ownerId = String(agentId).trim();
     const requesterRaw =
       requesterAgentId === undefined || requesterAgentId === null ? "" : String(requesterAgentId).trim();
-    if (requesterRaw) {
-      const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
-      if (!ownerRow) {
-        res.status(400).json({ error: "agentId (thread owner) not found" });
-        return;
-      }
-      const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterRaw)).limit(1);
-      if (!requesterRow) {
-        res.status(400).json({ error: "requesterAgentId not found" });
-        return;
-      }
-      const allowed = await canAssignThreadOwner(db, requesterRaw, ownerId);
-      if (!allowed) {
-        res.status(403).json({
-          error:
-            "Not allowed to assign this owner: must be self, or (as a lead) assign to an agent in your reporting line",
-        });
-        return;
-      }
+    const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
+    if (!ownerRow) {
+      res.status(400).json({ error: "agentId (thread owner) not found" });
+      return;
+    }
+    const requesterForPolicy = requesterRaw || ownerId;
+    const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterForPolicy)).limit(1);
+    if (!requesterRow) {
+      res.status(400).json({ error: "requesterAgentId not found" });
+      return;
+    }
+    const normalizedTaskType = normalizeThreadTaskType(taskType);
+    const decision = await evaluateThreadCreation(db, {
+      requesterAgentId: requesterForPolicy,
+      ownerAgentId: ownerId,
+      taskType: normalizedTaskType,
+      title: title != null ? String(title).trim() : null,
+    });
+    if (!decision.allowed) {
+      res.status(403).json({ error: decision.reason, code: decision.code });
+      return;
     }
     const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
     const threadStatus =
@@ -892,6 +920,7 @@ app.post(
       agentId: ownerId,
       title: title != null ? String(title).trim() : null,
       status: threadStatus,
+      taskType: normalizedTaskType,
     });
     await enqueueKickoffLeadRun({
       projectId,
@@ -905,6 +934,7 @@ app.post(
       projectId,
       agentId: ownerId,
       status: threadStatus,
+      taskType: normalizedTaskType,
     });
     } catch (err) {
       throw new HttpError(500, "Failed to create thread", { cause: err });
@@ -949,10 +979,16 @@ app.patch(
         res.status(400).json({ error: "requesterAgentId not found" });
         return;
       }
-      if (requesterRow.id !== thread.agentId) {
-        res.status(403).json({ error: "Only thread owner or Board of Directors can change thread status" });
-        return;
-      }
+    }
+    const statusDecision = await evaluateThreadStatusChange(db, {
+      actorType: isBoard ? "board" : "agent",
+      requesterAgentId: isBoard ? null : requesterRaw,
+      threadId,
+      newStatus: status,
+    });
+    if (!statusDecision.allowed) {
+      res.status(403).json({ error: statusDecision.reason, code: statusDecision.code });
+      return;
     }
     const oldStatus = thread.status;
     if (oldStatus === status) {
@@ -1122,7 +1158,9 @@ app.post(
   asyncHandler(async (req, res) => {
     try {
     const threadId = routeParam(req, "id");
-    const { agentId, content, actorType, actorName } = req.body;
+    const { agentId, content, actorType, actorName, runId, runStatus } = req.body;
+    const normalizedRunId = normalizeRunId(runId);
+    const normalizedRunStatus = parseRunStatusToken(runStatus);
     let normalizedActorType = typeof actorType === "string" ? actorType.trim().toLowerCase() : "agent";
     let normalizedActorName = typeof actorName === "string" ? actorName.trim() : null;
     let normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
@@ -1132,6 +1170,15 @@ app.post(
     }
     if (normalizedActorType !== "agent" && normalizedActorType !== "board") {
       res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
+      return;
+    }
+    // Treat JSON `null` like omitted (MCP client may send explicit null for optional fields).
+    if (runStatus != null && normalizedRunStatus == null) {
+      res.status(400).json({ error: "runStatus must be started, in_progress, or completed" });
+      return;
+    }
+    if (runId != null && !normalizedRunId) {
+      res.status(400).json({ error: "runId must be non-empty when provided" });
       return;
     }
     const [thread] = await db.select().from(threads).where(eq(threads.id, threadId)).limit(1);
@@ -1151,6 +1198,15 @@ app.post(
       normalizedAgentId = thread.agentId;
       normalizedActorName = owner.name;
     }
+    const contractResult = validateThreadMessageRunContract({
+      actorType: normalizedActorType as "agent" | "board",
+      runId: normalizedRunId,
+      runStatus: normalizedRunStatus,
+    });
+    if (!contractResult.ok) {
+      res.status(400).json({ error: contractResult.error });
+      return;
+    }
     if (normalizedActorType === "agent" && !normalizedAgentId) {
       res.status(400).json({ error: "agentId is required when actorType is agent" });
       return;
@@ -1163,6 +1219,36 @@ app.post(
       }
       // Canonicalize agent-authored messages to authoritative registry identity.
       normalizedActorName = resolvedAgent.name;
+      if (normalizedRunId) {
+        const [activeRun] = await db
+          .select({ id: agentRunRequests.id })
+          .from(agentRunRequests)
+          .where(
+            and(
+              eq(agentRunRequests.id, normalizedRunId),
+              eq(agentRunRequests.threadId, threadId),
+              eq(agentRunRequests.agentId, normalizedAgentId),
+              eq(agentRunRequests.status, "running")
+            )
+          )
+          .limit(1);
+        if (!activeRun) {
+          res.status(400).json({
+            error: "runId must refer to an active orchestration run for this thread and agent",
+          });
+          return;
+        }
+      }
+      const messageDecision = await evaluateMessagePosting(db, {
+        actorType: "agent",
+        actorAgentId: normalizedAgentId,
+        threadId,
+        hasRunStatus: normalizedRunStatus != null,
+      });
+      if (!messageDecision.allowed) {
+        res.status(403).json({ error: messageDecision.reason, code: messageDecision.code });
+        return;
+      }
     } else if (!normalizedActorName) {
       normalizedActorName = "Board of Directors";
     }
@@ -1175,6 +1261,8 @@ app.post(
       actorType: normalizedActorType,
       actorName: normalizedActorType === "board" ? (normalizedActorName || "Board") : normalizedActorName,
       content: String(content).trim(),
+      runId: normalizedRunId || null,
+      runStatus: normalizedRunStatus,
       createdAt,
     };
     await db.insert(messages).values(inserted);
@@ -1335,7 +1423,8 @@ process.on("uncaughtException", (error) => {
   })();
 });
 
-syncAgentConfigPointers()
+assertSchemaReady()
+  .then(() => syncAgentConfigPointers())
   .then(() => {
     const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
     const pollMs = Number.isFinite(pollMsRaw) ? Math.max(5000, Math.floor(pollMsRaw)) : 30000;

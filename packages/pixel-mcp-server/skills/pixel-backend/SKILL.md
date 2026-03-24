@@ -12,8 +12,8 @@ You interact with the Pixel backend **only through MCP tools** (no direct HTTP).
 - **At the start of important work:** Call `pixel_get_context` (optionally with `projectId`) so you load structured facts plus long-term semantic memory — stay aligned with the main simulation goals.
 - **After a meaningful decision or insight:** Call `pixel_store_memory` with one short sentence or bullet (not the whole chat).
 - **Before/during work:** Read projects, threads, messages (treat as user requests/tickets), and project goals.
-- **When starting work:** Create or attach to a thread (`pixel_create_thread`; use `ownerAgentId` to assign a report if you are a lead); post a "Started: …" message.
-- **When finishing work:** Post "Completed: …" or "Blocked: …" to the thread.
+- **When starting work:** Create or attach to a thread (`pixel_create_thread`; use `ownerAgentId` to assign a report if you are a lead); post via `pixel_post_message` with structured `status: "started"` plus objective/content.
+- **During / when finishing work:** Orchestrated runs require at least one `pixel_post_message` with `status: "in_progress"` and a terminal `status: "completed"` for the same run (the orchestrator may seed `started`). Run-level status is only `started` | `in_progress` | `completed`. If the **work item** is blocked, set the thread to `blocked` with `pixel_set_thread_status` and explain blockers in the message `reason` / content (do not invent a fourth run status).
 - **If you are a lead:** Use `pixel_get_visible_work` to see reports' per-project workspace paths and review their work.
 - **Before hiring or when you need the org chart:** Call `pixel_list_agents` so you know who already exists (avoids blind duplicate hires).
 
@@ -52,15 +52,15 @@ The backend **only auto-runs** agents (kickoff, new message on a thread, schedul
 
 1. **At start of a task:**  
    - Ensure a thread exists for the project and your work (create one with `pixel_create_thread` if needed).  
-   - Post a message: e.g. "Started: [short task description]".
+   - Post via `pixel_post_message` with `status: "started"` and a short objective.
    - Do this immediately; do not wait until code changes are complete.
 
-2. **At end of task:**  
-   - Post a message: "Completed: [summary]" or "Blocked: [reason]".
+2. **During and at end of task:**  
+   - Post `status: "in_progress"` while working, then `status: "completed"` with summary in objective/reason/content. If the thread work item cannot proceed, call `pixel_set_thread_status` with `blocked` and document why in the message.
 
 Hard requirement:
-- Every autonomous run must produce at least one `pixel_post_message` update in the assigned thread.
-- If execution fails, still post a `Blocked` message with the concrete failure reason.
+- Every autonomous run must include structured `in_progress` and `completed` run updates in the assigned thread (orchestration contract).
+- If execution fails, still post `in_progress` (if not yet posted) then `completed` with the concrete failure in `reason` / content when possible; set thread status as appropriate.
 
 This keeps every run tied to a thread and messages so the user can audit what was done.
 
@@ -78,7 +78,7 @@ When run autonomously (e.g. scheduled):
 1. Call `pixel_list_projects` (and optionally `pixel_get_project_goals` for each).
 2. For your project(s), call `pixel_list_threads` with `status: "not_started"` or `status: "in_progress"` to find work that needs attention.
 3. For each relevant thread, call `pixel_list_messages` to see new requests or comments.
-4. Create a thread or use an existing one; post "Started: …", do the work, then post "Completed: …" or "Blocked: …".
+4. Create a thread or use an existing one; post `status: "started"` or follow the orchestrator seed, post `status: "in_progress"` while working, then `status: "completed"` (and use `pixel_set_thread_status` for blocked work items).
 5. When all work in a thread is done, set thread status to `completed` using `pixel_set_thread_status`.
 
 Same tools; no direct API calls. Everything stays recorded and auditable.

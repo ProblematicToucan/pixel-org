@@ -154,7 +154,14 @@ export async function listThreads(
   projectId: string,
   options?: { status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null }
 ): Promise<
-  { id: string; projectId: string; agentId: string; title: string | null; status: string }[]
+  {
+    id: string;
+    projectId: string;
+    agentId: string;
+    title: string | null;
+    status: string;
+    taskType?: "technical" | "operations" | "finance" | "strategy" | "general";
+  }[]
 > {
   const url = options?.status
     ? `/projects/${encodeURIComponent(projectId)}/threads?status=${encodeURIComponent(options.status)}`
@@ -168,6 +175,7 @@ export async function createThread(
   options?: {
     ownerAgentId?: string | null;
     status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
+    taskType?: "technical" | "operations" | "finance" | "strategy" | "general" | null;
   }
 ): Promise<{ success: boolean; id?: string; projectId: string; agentId: string; status?: string }> {
   const requester = agentId();
@@ -176,6 +184,7 @@ export async function createThread(
     agentId: owner,
     title: title ?? null,
     status: options?.status ?? null,
+    taskType: options?.taskType ?? null,
     /** When set, backend enforces: self, or lead assigning to an agent in their reporting line. */
     requesterAgentId: requester,
   });
@@ -206,11 +215,26 @@ export async function listMessages(threadId: string): Promise<
   return get(`/threads/${encodeURIComponent(threadId)}/messages`);
 }
 
-export async function postMessage(threadId: string, content: string): Promise<{ success: boolean }> {
-  return post(`/threads/${encodeURIComponent(threadId)}/messages`, {
+export async function postMessage(
+  threadId: string,
+  content: string,
+  options?: {
+    runId?: string | null;
+    runStatus?: "started" | "in_progress" | "completed" | null;
+  }
+): Promise<{ success: boolean }> {
+  const body: Record<string, unknown> = {
     agentId: agentId(),
     content,
-  });
+  };
+  const rid = options?.runId;
+  if (rid != null && String(rid).trim() !== "") {
+    body.runId = rid;
+  }
+  if (options?.runStatus != null) {
+    body.runStatus = options.runStatus;
+  }
+  return post(`/threads/${encodeURIComponent(threadId)}/messages`, body);
 }
 
 export type ApprovalRequestRow = {

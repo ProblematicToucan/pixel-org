@@ -4,6 +4,10 @@ import { createCliSession, runAgent } from "@pixel-org/agent-runner";
 import type { RunAgentResult } from "@pixel-org/agent-runner";
 import { db, agents, projects, threads, messages, agentRunRequests, approvalRequests } from "../db/index.js";
 import { ensureAgentProjectLayout, provisionAgentWorkspace } from "../storage/index.js";
+import {
+  evaluateRunDeliveryContract,
+  normalizeDeliveryContractReason,
+} from "./orchestration-contract.js";
 
 function normalizeKickoffTitle(title: string | null | undefined): string {
   return (title ?? "").trim().toLowerCase();
@@ -29,6 +33,49 @@ function fallbackObjectiveForRunReason(reason: string): string {
   }
 }
 
+function hasContractRetryMarker(idempotencyKey: string | null | undefined): boolean {
+  return (idempotencyKey ?? "").includes(":contract-retry:1");
+}
+
+function isDeliveryContractFailure(error: string | null | undefined): boolean {
+  const value = (error ?? "").trim().toLowerCase();
+  return (
+    value.includes("contract_failure:missing_in_progress_update") ||
+    value.includes("contract_failure:missing_agent_thread_update") ||
+    value.includes("contract_failure:missing_terminal_status_update")
+  );
+}
+
+async function shouldThrottleAutomatedRunForContractFailure(params: {
+  threadId: string;
+  ownerAgentId: string;
+}): Promise<boolean> {
+  const runs = await db
+    .select()
+    .from(agentRunRequests)
+    .where(
+      and(
+        eq(agentRunRequests.threadId, params.threadId),
+        eq(agentRunRequests.agentId, params.ownerAgentId)
+      )
+    );
+  if (runs.length === 0) return false;
+  const latest = [...runs].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  )[0];
+  if (latest.status !== "failed" || !isDeliveryContractFailure(latest.error)) return false;
+
+  const anchor = latest.finishedAt ?? latest.updatedAt;
+  const anchorMs = new Date(anchor).getTime();
+  const threadMessages = await db.select().from(messages).where(eq(messages.threadId, params.threadId));
+  const hasForeignMessageSinceFailure = threadMessages.some((m) => {
+    if (new Date(m.createdAt).getTime() <= anchorMs) return false;
+    if (m.actorType === "board") return true;
+    return m.agentId !== params.ownerAgentId;
+  });
+  return !hasForeignMessageSinceFailure;
+}
+
 /** Builds the headless CLI task string; `continuationMode` toggles strict vs optional `pixel_get_context`. */
 function buildOrchestrationAgentTask(params: {
   reason: "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending";
@@ -47,15 +94,17 @@ function buildOrchestrationAgentTask(params: {
           "Run protocol:",
           "- Call pixel_get_context first.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- Use pixel_post_message with structured status: always post at least one in_progress update for this run, then a terminal completed update (required for orchestration).",
+          "- If no actionable work exists, post in_progress noting no-op, then completed with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post in_progress with your plan, do the work, then post completed.",
         ]
       : [
           "Run protocol:",
           "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- Use pixel_post_message with structured status: always post at least one in_progress update for this run, then a terminal completed update (required for orchestration).",
+          "- If no actionable work exists, post in_progress noting no-op, then completed with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post in_progress with your plan, do the work, then post completed.",
         ];
 
   const leadIn =
@@ -76,7 +125,7 @@ function buildOrchestrationAgentTask(params: {
           `- Use pixel_list_approval_requests with as=approver and status=pending, or resolve this ID directly.`,
           `- Read pixel_list_messages on this thread for full context.`,
           `- Call pixel_resolve_approval_request with approvalRequestId, decision (approved or rejected), and resolutionNote.`,
-          `- After resolving, post a short pixel_post_message on this same thread summarizing the decision for the audit trail (Status: Completed).`,
+          `- After resolving, post via pixel_post_message with structured status in_progress then completed on this thread summarizing the decision for the audit trail.`,
         ]
       : params.reason === "approval_pending"
         ? [
@@ -96,8 +145,10 @@ function buildOrchestrationAgentTask(params: {
     ...runProtocolLines,
     ...approvalBlock,
     "You MUST post at least one message to this exact thread using pixel_post_message.",
-    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
-    "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
+    "Run status in messages uses only Started/In Progress/Completed and is run-level only; it does not change thread work-item status.",
+    "When you need to change the thread work-item state, call pixel_set_thread_status explicitly.",
+    "If actionable work exists: first post structured in_progress with your immediate plan, then end with structured completed when done.",
+    "If there is no actionable work: post structured in_progress (no-op), then structured completed with 'No actionable task found in this cycle'.",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
       : params.reason === "approval_pending"
@@ -473,6 +524,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
     agentId: agent.id,
     actorType: "agent",
     actorName: agent.name,
+    runId: request.id,
+    runStatus: "started",
     content: [
       "Status: Started",
       `Objective: ${fallbackObjectiveForRunReason(request.reason)} for project ${request.projectId}`,
@@ -522,6 +575,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         resumeSessionId: sessionId,
         env: {
           PIXEL_RUN_REASON: request.reason,
+          PIXEL_RUN_REQUEST_ID: request.id,
+          PIXEL_ORCHESTRATED_RUN: "1",
           PIXEL_PROJECT_ID: request.projectId,
           PIXEL_PROJECT_WORKSPACE: projectDir,
           PIXEL_PROJECT_ARTIFACTS: artifactsDir,
@@ -561,11 +616,36 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       break;
     }
 
+    const msgsAfterRun = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+    const contractResult = result.success
+      ? evaluateRunDeliveryContract({
+          runId: request.id,
+          runEvents: msgsAfterRun.map((m) => ({
+            runId: m.runId ?? null,
+            runStatus: (m.runStatus as "started" | "in_progress" | "completed" | null) ?? null,
+            actorType: m.actorType as "agent" | "board",
+            agentId: m.agentId ?? null,
+            createdAt: m.createdAt,
+          })),
+          ownerAgentId: agent.id,
+          requireTerminalStatus: true,
+        })
+      : { passed: true as const };
+    const completionStatus = result.success && contractResult.passed ? "done" : "failed";
+    const shouldRetryContractFailure =
+      result.success && !contractResult.passed && !hasContractRetryMarker(request.idempotencyKey);
+    const completionError =
+      completionStatus === "done"
+        ? null
+        : result.success && !contractResult.passed
+          ? normalizeDeliveryContractReason(contractResult.reason)
+          : (result.stderr || "Agent run failed");
+
     const completionUpdate = await db
       .update(agentRunRequests)
       .set({
-        status: result.success ? "done" : "failed",
-        error: result.success ? null : (result.stderr || "Agent run failed"),
+        status: completionStatus,
+        error: completionError,
         pid: result.pid ?? null,
         command: result.command ?? null,
         args: result.args ? JSON.stringify(result.args) : null,
@@ -579,25 +659,46 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       .where(and(eq(agentRunRequests.id, request.id), eq(agentRunRequests.status, "running")))
       .returning();
 
+    if (completionUpdate.length > 0 && shouldRetryContractFailure) {
+      await enqueueRun({
+        projectId: request.projectId,
+        threadId: request.threadId,
+        agentId: request.agentId,
+        reason: request.reason as "kickoff_created" | "scheduled_awake" | "thread_message" | "approval_pending",
+        idempotencyKey: `${request.idempotencyKey}:contract-retry:1`,
+        approvalRequestId: request.approvalRequestId ?? null,
+      });
+    }
+
     if (completionUpdate.length > 0) {
-      const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
-      const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+      const agentMessageCount = msgsAfterRun.filter((m) => m.agentId === agent.id).length;
       const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
-      if (!hasAgentReply) {
+      if (!hasAgentReply && !shouldRetryContractFailure) {
         const obj = fallbackObjectiveForRunReason(request.reason);
-        const fallback = result.success
-          ? [
+        const fallback =
+          result.success && !contractResult.passed
+            ? [
+                "Status: Completed",
+                `Objective: ${obj}`,
+                `Reason code: ${contractResult.reason}`,
+                "Reason: Run failed strict completion contract; required structured in_progress and completed run updates from the owner agent.",
+                "Outcome: Failed",
+                "Next: Re-run only after fixing agent posting behavior; require structured in_progress and completed run updates.",
+              ].join("\n")
+            : result.success
+              ? [
+                  "Status: Completed",
+                  `Objective: ${obj}`,
+                  "Reason code: no_extra_agent_reply",
+                  "Reason: Run succeeded but no agent-authored messages were detected beyond the orchestrator start marker (unexpected).",
+                  "Outcome: Failed",
+                  "Next: Investigate agent output or MCP connectivity.",
+                ].join("\n")
+          : [
               "Status: Completed",
               `Objective: ${obj}`,
-              "Actions:",
-              "- CLI run completed but no thread update was posted by agent.",
-              "- Added fallback update for audit continuity.",
-              "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
-            ].join("\n")
-          : [
-              "Status: Blocked",
-              `Objective: ${obj}`,
               `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+              "Outcome: Failed",
               formatAgentCliFailureForThread(result.stderr, result.exitCode),
             ].join("\n");
         await db.insert(messages).values({
@@ -631,9 +732,10 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       actorType: "agent",
       actorName: agent.name,
       content: [
-        "Status: Blocked",
+        "Status: Completed",
         `Objective: ${fallbackObjectiveForRunReason(request.reason)}`,
         `Reason: Orchestration error while launching agent CLI.`,
+        "Outcome: Failed",
         `Detail: ${errMsg}`,
       ].join("\n"),
     });
@@ -778,6 +880,14 @@ export async function enqueueThreadOwnerRunOnMessage(params: {
     )
     .limit(1);
   if (activeForOwner) return;
+  if (
+    await shouldThrottleAutomatedRunForContractFailure({
+      threadId: thread.id,
+      ownerAgentId: thread.agentId,
+    })
+  ) {
+    return;
+  }
 
   const idempotencyKey = `thread_message:${thread.projectId}:${thread.id}:${params.messageId}:${thread.agentId}`;
   await enqueueRun({
@@ -795,7 +905,7 @@ function computeNextAwakeAt(now: Date, intervalMinutes: number): Date {
 
 function isTerminalStatus(content: string): boolean {
   const normalized = content.trim().toLowerCase();
-  return normalized.startsWith("status: completed") || normalized.startsWith("status: blocked");
+  return normalized.startsWith("status: completed");
 }
 
 async function hasTerminalAgentMessageSinceStart(request: typeof agentRunRequests.$inferSelect): Promise<boolean> {
@@ -914,6 +1024,14 @@ async function enqueueAwakeRunsForAgent(agentId: string): Promise<number> {
   const nonTerminal = prioritized.find((x) => x.latest && !isTerminalStatus(x.latest.content));
   const target = nonTerminal ?? prioritized[0];
   if (!target) return 0;
+  if (
+    await shouldThrottleAutomatedRunForContractFailure({
+      threadId: target.thread.id,
+      ownerAgentId: agentId,
+    })
+  ) {
+    return 0;
+  }
 
   const marker = target.latest?.id ?? "no-message";
   const idempotencyKey = `awake:${agentId}:${target.thread.id}:${marker}:${Math.floor(Date.now() / 60000)}`;

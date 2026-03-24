@@ -30,6 +30,7 @@ const backToProjectLabel = computed(() =>
 type RunEvent = {
   message: Message;
   statusLabel: string | null;
+  outcomeLabel: string | null;
 };
 
 type TimelineItem =
@@ -149,14 +150,14 @@ function parseStatus(content: string): string | null {
   return line.slice(7).trim() || null;
 }
 
-function titleCaseStatus(status: string | null): string {
-  if (!status) return "Update";
-  return status
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
+function runStageLabel(status: string | null): string | null {
+  if (!status) return null;
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "started") return "Started";
+  if (normalized === "in progress") return "In Progress";
+  // Run-level "blocked" is rendered as terminal run stage "Complete".
+  if (normalized === "completed" || normalized === "blocked") return "Complete";
+  return null;
 }
 
 function runPreview(content: string): string {
@@ -164,6 +165,10 @@ function runPreview(content: string): string {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
+  const reasonCodeLine = lines.find((line) =>
+    line.toLowerCase().startsWith("reason code:")
+  );
+  if (reasonCodeLine) return reasonCodeLine;
   for (const line of lines) {
     const normalized = line.toLowerCase();
     if (
@@ -180,6 +185,18 @@ function runPreview(content: string): string {
     return line;
   }
   return lines[0] || "No additional details.";
+}
+
+function parseOutcome(content: string): string | null {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s.toLowerCase().startsWith("outcome:"));
+  if (!line) return null;
+  const value = line.slice("outcome:".length).trim().toLowerCase();
+  if (value === "failed") return "Failed";
+  if (value === "success") return "Success";
+  return value ? value[0].toUpperCase() + value.slice(1) : null;
 }
 
 function parseObjective(content: string): string | null {
@@ -254,7 +271,8 @@ const timelineItems = computed<TimelineItem[]>(() => {
       if (messageRunKeys.value[candidate.id] !== runKey) break;
       runEvents.push({
         message: candidate,
-        statusLabel: titleCaseStatus(parseStatus(candidate.content)),
+        statusLabel: runStageLabel(parseStatus(candidate.content)),
+        outcomeLabel: parseOutcome(candidate.content),
       });
       j += 1;
     }
@@ -266,7 +284,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
     }
 
     const latest = runEvents[runEvents.length - 1].message;
-    const latestStatus = titleCaseStatus(parseStatus(latest.content));
+    const latestStatus = runStageLabel(parseStatus(latest.content)) ?? "Update";
     const rawRunId = runKey.startsWith("run:") ? runKey.slice(4) : runKey;
     items.push({
       kind: "run",
@@ -310,11 +328,7 @@ function startedInfoSummary(message: Message): string {
 
 function standaloneRunStatusLabel(message: Message): string | null {
   if (message.actorType !== "agent") return null;
-  const normalized = parseStatus(message.content)?.trim().toLowerCase();
-  if (normalized === "in progress" || normalized === "completed") {
-    return titleCaseStatus(normalized);
-  }
-  return null;
+  return runStageLabel(parseStatus(message.content));
 }
 
 function closeLiveUpdates() {
@@ -444,6 +458,9 @@ onUnmounted(() => {
                   {{ event.statusLabel || "Update" }}
                 </button>
               </div>
+              <p v-if="selectedRunEvent(item).outcomeLabel" class="run-outcome">
+                Outcome: {{ selectedRunEvent(item).outcomeLabel }}
+              </p>
               <p class="content">{{ runPreview(selectedRunEvent(item).message.content) }}</p>
               <div class="run-details">
                 <p class="run-meta">Run ID: {{ item.runId }}</p>
@@ -631,6 +648,12 @@ onUnmounted(() => {
   margin-top: 0.6rem;
   border-top: 1px solid var(--border);
   padding-top: 0.5rem;
+}
+.run-outcome {
+  margin: 0.45rem 0 0;
+  color: var(--error);
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 .run-meta {
   margin: 0 0 0.45rem;
