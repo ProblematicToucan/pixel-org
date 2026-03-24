@@ -179,7 +179,6 @@ export function syncProjectWorkspaceSymlinks(
   const { cursorPath, claudePath } = getAllMcpConfigPaths(agent);
   const agentsMd = getAgentsMdPath(agent);
   const agentDotAgents = path.join(agentDir, ".agents");
-
   ensureSymlinkToTarget(agentsMd, path.join(projectDir, "AGENTS.md"), "file");
   ensureSymlinkToTarget(cursorPath, path.join(projectDir, ".cursor", "mcp.json"), "file");
   ensureSymlinkToTarget(claudePath, path.join(projectDir, ".claude", "mcp.json"), "file");
@@ -245,7 +244,7 @@ export function writeMcpJson(agent: { id: string; role: string }): void {
   ensureDir(path.dirname(cursorPath));
   ensureDir(path.dirname(claudePath));
   const serverPath = getPixelMcpServerPath();
-  const serverName = `pixel-backend-${agent.id}`;
+  const serverName = "pixel-backend";
   const payload = {
     mcpServers: {
       [serverName]: {

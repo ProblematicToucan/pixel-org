@@ -4,7 +4,7 @@ Agents are **participants** (like users): they can be recruited, registered in t
 
 ## Model
 
-- **Projects** – Like Slack channels or repos. Each has a name and a `slug` (e.g. `project_1`) that can align with on-disk layout `~/.pixel-org/{id}-{role}/{project-id}/` (symlinks + `artifacts/`; default storage root; override with `AGENTS_STORAGE_PATH`).
+- **Projects** – Like Slack channels or repos. Each has a name and a `slug` (e.g. `project_1`) that can align with on-disk layout `~/.pixel-org/{id}-{role}/{project-id}/` (`artifacts/` + local runtime files; default storage root; override with `AGENTS_STORAGE_PATH`).
 - **Threads** – One per “piece of work” in a project. Each thread has an **owner** (one agent whose work it is) and a optional title. Like a PR or a Slack thread.
 - **Messages** – Replies in a thread. **Any agent** can post (CEO, CTO, Engineer, etc.). Discussion happens here: feedback, approval, questions – no separate “reviews” table.
 
