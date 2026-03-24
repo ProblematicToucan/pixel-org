@@ -295,6 +295,10 @@ export function createServer(): McpServer {
           .enum(["not_started", "in_progress", "completed", "blocked", "cancelled"])
           .optional()
           .describe("Optional initial thread status (default: not_started)"),
+        taskType: z
+          .enum(["technical", "operations", "finance", "strategy", "general"])
+          .optional()
+          .describe("Optional task domain classification (default: general)"),
       }),
     },
     async (args: {
@@ -302,6 +306,7 @@ export function createServer(): McpServer {
       title?: string;
       ownerAgentId?: string;
       status?: string;
+      taskType?: string;
     }): Promise<CallToolResult> => {
       const projectId = args?.projectId ?? "";
       if (!projectId) {
@@ -319,6 +324,14 @@ export function createServer(): McpServer {
             | "completed"
             | "blocked"
             | "cancelled"
+            | null
+            | undefined,
+          taskType: args?.taskType as
+            | "technical"
+            | "operations"
+            | "finance"
+            | "strategy"
+            | "general"
             | null
             | undefined,
         });

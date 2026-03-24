@@ -45,6 +45,26 @@ export async function getDescendantAgents(
   return result;
 }
 
+export type ActorRelation = "self" | "descendant" | "ancestor" | "unrelated";
+
+/**
+ * Resolve actor relation relative to target.
+ * - descendant: target is in actor's org subtree
+ * - ancestor: actor is in target's org subtree
+ */
+export async function resolveActorRelation(
+  db: Db,
+  actorId: string,
+  targetId: string
+): Promise<ActorRelation> {
+  if (actorId === targetId) return "self";
+  const actorDescendants = await getDescendantAgents(db, actorId);
+  if (actorDescendants.some((a) => a.id === targetId)) return "descendant";
+  const targetDescendants = await getDescendantAgents(db, targetId);
+  if (targetDescendants.some((a) => a.id === actorId)) return "ancestor";
+  return "unrelated";
+}
+
 /** List project ids for an agent by reading their dir on disk (subdirs other than skills). */
 function listProjectIdsForAgent(agent: { id: string; role: string }): string[] {
   const agentDir = getAgentDir(agent);

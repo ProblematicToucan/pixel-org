@@ -168,6 +168,7 @@ export async function createThread(
   options?: {
     ownerAgentId?: string | null;
     status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
+    taskType?: "technical" | "operations" | "finance" | "strategy" | "general" | null;
   }
 ): Promise<{ success: boolean; id?: string; projectId: string; agentId: string; status?: string }> {
   const requester = agentId();
@@ -176,6 +177,7 @@ export async function createThread(
     agentId: owner,
     title: title ?? null,
     status: options?.status ?? null,
+    taskType: options?.taskType ?? null,
     /** When set, backend enforces: self, or lead assigning to an agent in their reporting line. */
     requesterAgentId: requester,
   });

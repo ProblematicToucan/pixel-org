@@ -13,8 +13,13 @@ import { db, agents, projects, threads, messages, agentRunRequests } from "./db/
 import {
   getVisibleWork,
   getAgentWorkspacesForProject,
-  canAssignThreadOwner,
 } from "./services/visible-work.js";
+import {
+  evaluateMessagePosting,
+  evaluateThreadCreation,
+  evaluateThreadStatusChange,
+  normalizeThreadTaskType,
+} from "./services/governance-policy.js";
 import {
   cancelApprovalRequest,
   createApprovalRequest,
@@ -852,11 +857,12 @@ app.post(
   asyncHandler(async (req, res) => {
     try {
     const projectId = routeParam(req, "id");
-    const { agentId, title, requesterAgentId, status } = req.body as {
+    const { agentId, title, requesterAgentId, status, taskType } = req.body as {
       agentId?: string;
       title?: string | null;
       requesterAgentId?: string | null;
       status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null;
+      taskType?: string | null;
     };
     if (!projectId || agentId == null) {
       res.status(400).json({ error: "project id and agentId required" });
@@ -865,25 +871,27 @@ app.post(
     const ownerId = String(agentId).trim();
     const requesterRaw =
       requesterAgentId === undefined || requesterAgentId === null ? "" : String(requesterAgentId).trim();
-    if (requesterRaw) {
-      const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
-      if (!ownerRow) {
-        res.status(400).json({ error: "agentId (thread owner) not found" });
-        return;
-      }
-      const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterRaw)).limit(1);
-      if (!requesterRow) {
-        res.status(400).json({ error: "requesterAgentId not found" });
-        return;
-      }
-      const allowed = await canAssignThreadOwner(db, requesterRaw, ownerId);
-      if (!allowed) {
-        res.status(403).json({
-          error:
-            "Not allowed to assign this owner: must be self, or (as a lead) assign to an agent in your reporting line",
-        });
-        return;
-      }
+    const [ownerRow] = await db.select().from(agents).where(eq(agents.id, ownerId)).limit(1);
+    if (!ownerRow) {
+      res.status(400).json({ error: "agentId (thread owner) not found" });
+      return;
+    }
+    const requesterForPolicy = requesterRaw || ownerId;
+    const [requesterRow] = await db.select().from(agents).where(eq(agents.id, requesterForPolicy)).limit(1);
+    if (!requesterRow) {
+      res.status(400).json({ error: "requesterAgentId not found" });
+      return;
+    }
+    const normalizedTaskType = normalizeThreadTaskType(taskType);
+    const decision = await evaluateThreadCreation(db, {
+      requesterAgentId: requesterForPolicy,
+      ownerAgentId: ownerId,
+      taskType: normalizedTaskType,
+      title: title != null ? String(title).trim() : null,
+    });
+    if (!decision.allowed) {
+      res.status(403).json({ error: decision.reason, code: decision.code });
+      return;
     }
     const validStatuses = ["not_started", "in_progress", "completed", "blocked", "cancelled"] as const;
     const threadStatus =
@@ -897,6 +905,7 @@ app.post(
       agentId: ownerId,
       title: title != null ? String(title).trim() : null,
       status: threadStatus,
+      taskType: normalizedTaskType,
     });
     await enqueueKickoffLeadRun({
       projectId,
@@ -910,6 +919,7 @@ app.post(
       projectId,
       agentId: ownerId,
       status: threadStatus,
+      taskType: normalizedTaskType,
     });
     } catch (err) {
       throw new HttpError(500, "Failed to create thread", { cause: err });
@@ -954,10 +964,16 @@ app.patch(
         res.status(400).json({ error: "requesterAgentId not found" });
         return;
       }
-      if (requesterRow.id !== thread.agentId) {
-        res.status(403).json({ error: "Only thread owner or Board of Directors can change thread status" });
-        return;
-      }
+    }
+    const statusDecision = await evaluateThreadStatusChange(db, {
+      actorType: isBoard ? "board" : "agent",
+      requesterAgentId: isBoard ? null : requesterRaw,
+      threadId,
+      newStatus: status,
+    });
+    if (!statusDecision.allowed) {
+      res.status(403).json({ error: statusDecision.reason, code: statusDecision.code });
+      return;
     }
     const oldStatus = thread.status;
     if (oldStatus === status) {
@@ -1207,6 +1223,16 @@ app.post(
           });
           return;
         }
+      }
+      const messageDecision = await evaluateMessagePosting(db, {
+        actorType: "agent",
+        actorAgentId: normalizedAgentId,
+        threadId,
+        hasRunStatus: normalizedRunStatus != null,
+      });
+      if (!messageDecision.allowed) {
+        res.status(403).json({ error: messageDecision.reason, code: messageDecision.code });
+        return;
       }
     } else if (!normalizedActorName) {
       normalizedActorName = "Board of Directors";
