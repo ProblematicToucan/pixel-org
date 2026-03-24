@@ -39,7 +39,7 @@ import {
   getAgentsMdPath,
   readAgentConfigDisplay,
 } from "./storage/index.js";
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import fs from "node:fs";
 import type { Server } from "node:http";
 import { asyncHandler } from "./asyncHandler.js";
@@ -120,6 +120,21 @@ async function syncAgentConfigPointers(): Promise<void> {
         .set({ config: pointer, updatedAt: new Date() })
         .where(eq(agents.id, row.id));
     }
+  }
+}
+
+async function assertSchemaReady(): Promise<void> {
+  const result = await db.execute(sql`
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'threads' AND column_name = 'task_type'
+    LIMIT 1
+  `);
+  const rows = (result as { rows?: unknown[] }).rows ?? [];
+  if (rows.length === 0) {
+    throw new Error(
+      "Database schema is missing threads.task_type. Run migrations before starting backend (pnpm --filter @pixel-org/backend db:migrate)."
+    );
   }
 }
 
@@ -1408,7 +1423,8 @@ process.on("uncaughtException", (error) => {
   })();
 });
 
-syncAgentConfigPointers()
+assertSchemaReady()
+  .then(() => syncAgentConfigPointers())
   .then(() => {
     const pollMsRaw = Number(process.env.PIXEL_AWAKE_POLL_MS ?? "30000");
     const pollMs = Number.isFinite(pollMsRaw) ? Math.max(5000, Math.floor(pollMsRaw)) : 30000;

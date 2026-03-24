@@ -64,6 +64,13 @@
       "when": 1774281351170,
       "tag": "0008_sudden_true_believers",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774360000000,
+      "tag": "0009_lead_governance_task_type",
+      "breakpoints": true
     }
   ]
 }

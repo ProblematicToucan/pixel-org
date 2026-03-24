@@ -81,7 +81,7 @@ export async function evaluateMessagePosting(
 
   const relation = await resolveActorRelation(db, actorId, thread.agentId);
   if (relation === "self") return { allowed: true };
-  if (relation === "ancestor") {
+  if (relation === "descendant") {
     if (params.hasRunStatus) {
       return {
         allowed: false,
@@ -121,7 +121,7 @@ export async function evaluateThreadStatusChange(
   if (requesterId === thread.agentId) return { allowed: true };
 
   const relation = await resolveActorRelation(db, requesterId, thread.agentId);
-  if (relation === "ancestor" && (params.newStatus === "blocked" || params.newStatus === "cancelled")) {
+  if (relation === "descendant" && (params.newStatus === "blocked" || params.newStatus === "cancelled")) {
     return { allowed: true };
   }
 

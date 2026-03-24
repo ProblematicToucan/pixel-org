@@ -154,7 +154,14 @@ export async function listThreads(
   projectId: string,
   options?: { status?: "not_started" | "in_progress" | "completed" | "blocked" | "cancelled" | null }
 ): Promise<
-  { id: string; projectId: string; agentId: string; title: string | null; status: string }[]
+  {
+    id: string;
+    projectId: string;
+    agentId: string;
+    title: string | null;
+    status: string;
+    taskType?: "technical" | "operations" | "finance" | "strategy" | "general";
+  }[]
 > {
   const url = options?.status
     ? `/projects/${encodeURIComponent(projectId)}/threads?status=${encodeURIComponent(options.status)}`

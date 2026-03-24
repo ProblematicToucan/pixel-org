@@ -5,7 +5,12 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { migrate } from "drizzle-orm/pglite/migrator";
+import { PGlite } from "@electric-sql/pglite";
+import { Pool } from "pg";
+import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
+import { migrate as migrateNodePg } from "drizzle-orm/node-postgres/migrator";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..", "..", "..");
@@ -17,16 +22,45 @@ import { agents } from "./db/schema.js";
 import { getAgentsMdConfigPointer, provisionAgentWorkspace } from "./storage/index.js";
 
 const EXAMPLE_LEAD_NAME = "Lead";
+const backendRoot = path.resolve(__dirname, "..");
+const defaultPglitePath = path.join(backendRoot, "data");
+const databaseUrl = process.env.DATABASE_URL?.trim();
+const useExternalPg = Boolean(databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl));
+const configuredEmbeddedPath = (databaseUrl ?? "").replace(/^file:/, "").trim();
+const pglitePath = useExternalPg
+  ? defaultPglitePath
+  : configuredEmbeddedPath
+    ? path.resolve(backendRoot, configuredEmbeddedPath)
+    : defaultPglitePath;
+
+async function runMigrations(): Promise<void> {
+  const migrationsFolder = path.join(__dirname, "..", "drizzle");
+  if (useExternalPg && databaseUrl) {
+    const pool = new Pool({ connectionString: databaseUrl });
+    const migrationDb = drizzleNodePg(pool);
+    try {
+      await migrateNodePg(migrationDb, { migrationsFolder });
+    } finally {
+      await pool.end();
+    }
+    return;
+  }
+  const client = new PGlite(pglitePath);
+  const migrationDb = drizzlePglite(client);
+  try {
+    await migratePglite(migrationDb, { migrationsFolder });
+  } finally {
+    await client.close();
+  }
+}
 
 async function seed() {
-  const migrationsFolder = path.join(__dirname, "..", "drizzle");
-  await migrate(db as any, { migrationsFolder });
-
-  const [existing] = await db
-    .select()
-    .from(agents)
-    .where(eq(agents.name, EXAMPLE_LEAD_NAME))
-    .limit(1);
+  await runMigrations();
+  const leadRows = await db.select().from(agents).where(eq(agents.isLead, true));
+  if (leadRows.length > 1) {
+    throw new Error("Multiple lead agents exist; resolve duplicates before seeding.");
+  }
+  const existing = leadRows[0];
 
   if (existing) {
     provisionAgentWorkspace({
@@ -39,7 +73,7 @@ async function seed() {
       .update(agents)
       .set({ config: getAgentsMdConfigPointer({ id: existing.id, role: existing.role }) })
       .where(eq(agents.id, existing.id));
-    console.log("Example lead agent already exists; provisioned workspace (AGENTS.md, mcp.json, skills).");
+    console.log("Lead agent already exists; provisioned workspace (AGENTS.md, mcp.json, skills).");
     return;
   }
 
