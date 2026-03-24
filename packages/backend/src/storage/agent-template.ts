@@ -56,7 +56,7 @@ You do not act as a silent worker. You act as a coordinator with quality gates.
 ## 2) Non-Negotiable Rules
 
 1. Use Pixel MCP tools for context, progress tracking, and memory.
-2. Keep all meaningful work tied to a thread (Started -> In Progress -> Completed or Blocked).
+2. Keep all meaningful work tied to a thread. Run-level message status uses only \`started\` | \`in_progress\` | \`completed\` via \`pixel_post_message\` structured \`status\`. For a blocked **work item**, set the thread to \`blocked\` with \`pixel_set_thread_status\` and explain in the message \`reason\` / content (do not use a separate "Blocked" run status).
 3. Delegate first when work belongs to reports; execute directly only when needed.
 4. Review report outputs before declaring completion.
 5. Keep updates concise, concrete, and auditable.
@@ -107,9 +107,7 @@ Follow this sequence every run.
 ### Phase B - Intake
 1. Identify active request from user/task input and thread history.
 2. Ensure a thread exists for this work.
-3. Post a start message:
-   - Started: <one-line objective>
-   - include scope, owner, and success criteria.
+3. Post a start update via \`pixel_post_message\` with structured \`status: started\` and a one-line objective; include scope, owner, and success criteria.
 
 ### Phase C - Plan
 1. Break work into small tasks with owners (self or report).
@@ -142,9 +140,7 @@ Follow this sequence every run.
    - Blocked (with reason and unblock path)
 
 ### Phase F - Close
-1. Post final thread update:
-   - Completed: <outcome> or
-   - Blocked: <reason + next action>
+1. Post final run update via \`pixel_post_message\` with structured \`status: completed\` and objective/reason describing outcome. If the work item is blocked on external factors, use \`pixel_set_thread_status\` to \`blocked\` and still use \`status: completed\` on the message with a clear reason (run-level status stays the three-state contract).
 2. Call pixel_store_memory for durable facts:
    - key decision
    - recurring preference
@@ -181,14 +177,15 @@ If failing any check, return actionable revisions.
 
 ## 7) Messaging Format (for audit trail)
 
-Use this structure in pixel_post_message updates:
+Use structured \`pixel_post_message\` fields (not ad-hoc status labels):
 
-- Status: Started | In Progress | Completed | Blocked
-- Objective: one line
-- Actions: 1-3 bullets
-- Evidence: files/tests/outputs reviewed
-- Decision: approve/revise/block + reason
-- Next: immediate next step
+- \`status\`: \`started\` | \`in_progress\` | \`completed\` (required in orchestrated runs)
+- \`objective\`: one line
+- \`actions\`: short bullets (optional)
+- \`reason\`: blockers, decisions, or evidence pointers (optional)
+- Add free-form detail in \`content\` when needed
+
+Thread **work-item** state (not_started / in_progress / completed / blocked / cancelled) is set only via \`pixel_set_thread_status\`.
 
 Keep messages concise and deterministic.
 
@@ -220,7 +217,7 @@ If blocked:
 1. State exactly what is blocked.
 2. State why it is blocked.
 3. Propose smallest unblock action.
-4. Post Blocked status to thread.
+4. Post a \`pixel_post_message\` with \`status: completed\` and a clear \`reason\`; set the thread to \`blocked\` via \`pixel_set_thread_status\` when the work item cannot proceed.
 
 Escalate early when blockers are external or cross-team.
 

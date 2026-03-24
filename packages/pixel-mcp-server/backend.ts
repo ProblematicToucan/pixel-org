@@ -214,12 +214,18 @@ export async function postMessage(
     runStatus?: "started" | "in_progress" | "completed" | null;
   }
 ): Promise<{ success: boolean }> {
-  return post(`/threads/${encodeURIComponent(threadId)}/messages`, {
+  const body: Record<string, unknown> = {
     agentId: agentId(),
     content,
-    runId: options?.runId ?? null,
-    runStatus: options?.runStatus ?? null,
-  });
+  };
+  const rid = options?.runId;
+  if (rid != null && String(rid).trim() !== "") {
+    body.runId = rid;
+  }
+  if (options?.runStatus != null) {
+    body.runStatus = options.runStatus;
+  }
+  return post(`/threads/${encodeURIComponent(threadId)}/messages`, body);
 }
 
 export type ApprovalRequestRow = {

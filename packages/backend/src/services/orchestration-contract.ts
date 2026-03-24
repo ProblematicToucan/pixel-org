@@ -26,18 +26,23 @@ export function evaluateRunDeliveryContract(params: {
   ownerAgentId: string;
   requireTerminalStatus: boolean;
 }): { passed: true } | { passed: false; reason: DeliveryContractFailureReason } {
-  const ownerUpdates = params.runEvents.filter((event) => {
+  const ownerScoped = params.runEvents.filter((event) => {
     if (event.runId !== params.runId) return false;
     if (event.actorType !== "agent" || event.agentId !== params.ownerAgentId) return false;
     return event.runStatus != null;
   });
 
-  if (ownerUpdates.length === 0) {
+  /** Orchestrator seeds `started`; contract requires at least one agent-originated in_progress or completed update. */
+  const meaningfulOwnerUpdates = ownerScoped.filter(
+    (event) => event.runStatus === "in_progress" || event.runStatus === "completed"
+  );
+
+  if (meaningfulOwnerUpdates.length === 0) {
     return { passed: false, reason: "missing_agent_thread_update" };
   }
 
   if (params.requireTerminalStatus) {
-    const hasTerminal = ownerUpdates.some((event) => isTerminalStatusToken(event.runStatus));
+    const hasTerminal = ownerScoped.some((event) => isTerminalStatusToken(event.runStatus));
     if (!hasTerminal) {
       return { passed: false, reason: "missing_terminal_status_update" };
     }

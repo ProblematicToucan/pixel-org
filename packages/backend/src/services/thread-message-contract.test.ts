@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateThreadMessageRunContract } from "./thread-message-contract.js";
+import { parseRunStatusToken, validateThreadMessageRunContract } from "./thread-message-contract.js";
 
 test("rejects payload with runId but no runStatus", () => {
   const result = validateThreadMessageRunContract({
@@ -52,4 +52,8 @@ test("accepts valid agent payload with runId and runStatus", () => {
   });
 
   assert.deepEqual(result, { ok: true });
+});
+
+test("parseRunStatusToken treats null like absent", () => {
+  assert.equal(parseRunStatusToken(null), null);
 });

@@ -46,10 +46,36 @@ test("fails when terminal status is required but only non-terminal updates exist
   );
 });
 
+test("fails when only orchestrator-seeded started exists (no in_progress or completed from agent)", () => {
+  const result = evaluateRunDeliveryContract({
+    runId: "run-1",
+    runEvents: [event("started")],
+    ownerAgentId: "agent-1",
+    requireTerminalStatus: true,
+  });
+
+  assert.equal(result.passed, false);
+  assert.equal(
+    (result as { reason: DeliveryContractFailureReason }).reason,
+    "missing_agent_thread_update"
+  );
+});
+
 test("passes when run has owner update and completed terminal status", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [event("started"), event("in_progress"), event("completed")],
+    ownerAgentId: "agent-1",
+    requireTerminalStatus: true,
+  });
+
+  assert.deepEqual(result, { passed: true });
+});
+
+test("passes with only completed when no-op path (no started/in_progress)", () => {
+  const result = evaluateRunDeliveryContract({
+    runId: "run-1",
+    runEvents: [event("completed")],
     ownerAgentId: "agent-1",
     requireTerminalStatus: true,
   });

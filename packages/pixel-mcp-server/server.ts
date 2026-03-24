@@ -420,7 +420,7 @@ export function createServer(): McpServer {
     "pixel_post_message",
     {
       description:
-        "Post a message to a thread (record progress, reply, or feedback). Prefer structured status posting: status + objective + actions for reliable orchestration parsing.",
+        "Post a message to a thread (record progress, reply, or feedback). Use structured fields: `status` (started | in_progress | completed) plus optional objective/actions/reason; the backend stores run-level status on the message row. Orchestrated agent runs (PIXEL_ORCHESTRATED_RUN / PIXEL_RUN_REQUEST_ID) must include `status`. For blocked work items, use `status: completed` with a clear `reason`, and set the thread work-item to blocked via `pixel_set_thread_status` if appropriate.",
       inputSchema: z.object({
         threadId: z.string().describe("Thread UUID"),
         content: z.string().optional().describe("Raw message content (legacy free-form path)"),

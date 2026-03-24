@@ -1141,11 +1141,12 @@ app.post(
       res.status(400).json({ error: "actorType must be 'agent' or 'board'" });
       return;
     }
-    if (runStatus !== undefined && normalizedRunStatus == null) {
+    // Treat JSON `null` like omitted (MCP client may send explicit null for optional fields).
+    if (runStatus != null && normalizedRunStatus == null) {
       res.status(400).json({ error: "runStatus must be started, in_progress, or completed" });
       return;
     }
-    if (runId !== undefined && !normalizedRunId) {
+    if (runId != null && !normalizedRunId) {
       res.status(400).json({ error: "runId must be non-empty when provided" });
       return;
     }
