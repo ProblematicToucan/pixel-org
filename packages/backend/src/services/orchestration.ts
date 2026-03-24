@@ -40,6 +40,7 @@ function hasContractRetryMarker(idempotencyKey: string | null | undefined): bool
 function isDeliveryContractFailure(error: string | null | undefined): boolean {
   const value = (error ?? "").trim().toLowerCase();
   return (
+    value.includes("contract_failure:missing_in_progress_update") ||
     value.includes("contract_failure:missing_agent_thread_update") ||
     value.includes("contract_failure:missing_terminal_status_update")
   );
@@ -93,15 +94,17 @@ function buildOrchestrationAgentTask(params: {
           "Run protocol:",
           "- Call pixel_get_context first.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post terminal 'Status: Completed'.",
+          "- Use pixel_post_message with structured status: always post at least one in_progress update for this run, then a terminal completed update (required for orchestration).",
+          "- If no actionable work exists, post in_progress noting no-op, then completed with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post in_progress with your plan, do the work, then post completed.",
         ]
       : [
           "Run protocol:",
           "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post terminal 'Status: Completed'.",
+          "- Use pixel_post_message with structured status: always post at least one in_progress update for this run, then a terminal completed update (required for orchestration).",
+          "- If no actionable work exists, post in_progress noting no-op, then completed with 'No actionable task found in this cycle'.",
+          "- If actionable work exists, post in_progress with your plan, do the work, then post completed.",
         ];
 
   const leadIn =
@@ -122,7 +125,7 @@ function buildOrchestrationAgentTask(params: {
           `- Use pixel_list_approval_requests with as=approver and status=pending, or resolve this ID directly.`,
           `- Read pixel_list_messages on this thread for full context.`,
           `- Call pixel_resolve_approval_request with approvalRequestId, decision (approved or rejected), and resolutionNote.`,
-          `- After resolving, post a short pixel_post_message on this same thread summarizing the decision for the audit trail (Status: Completed).`,
+          `- After resolving, post via pixel_post_message with structured status in_progress then completed on this thread summarizing the decision for the audit trail.`,
         ]
       : params.reason === "approval_pending"
         ? [
@@ -144,8 +147,8 @@ function buildOrchestrationAgentTask(params: {
     "You MUST post at least one message to this exact thread using pixel_post_message.",
     "Run status in messages uses only Started/In Progress/Completed and is run-level only; it does not change thread work-item status.",
     "When you need to change the thread work-item state, call pixel_set_thread_status explicitly.",
-    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with terminal 'Status: Completed' when done.",
-    "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
+    "If actionable work exists: first post structured in_progress with your immediate plan, then end with structured completed when done.",
+    "If there is no actionable work: post structured in_progress (no-op), then structured completed with 'No actionable task found in this cycle'.",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
       : params.reason === "approval_pending"
@@ -678,18 +681,18 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
                 "Status: Completed",
                 `Objective: ${obj}`,
                 `Reason code: ${contractResult.reason}`,
-                "Reason: Run failed strict completion contract; required owner-agent thread output missing.",
+                "Reason: Run failed strict completion contract; required structured in_progress and completed run updates from the owner agent.",
                 "Outcome: Failed",
-                "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
+                "Next: Re-run only after fixing agent posting behavior; require structured in_progress and completed run updates.",
               ].join("\n")
             : result.success
               ? [
                   "Status: Completed",
                   `Objective: ${obj}`,
-                  "Reason code: missing_agent_thread_update",
-                  "Reason: Run completed but owner-agent thread update was missing.",
+                  "Reason code: no_extra_agent_reply",
+                  "Reason: Run succeeded but no agent-authored messages were detected beyond the orchestrator start marker (unexpected).",
                   "Outcome: Failed",
-                  "Next: Re-run only after fixing agent posting behavior; require Status: In Progress and terminal status update.",
+                  "Next: Investigate agent output or MCP connectivity.",
                 ].join("\n")
           : [
               "Status: Completed",

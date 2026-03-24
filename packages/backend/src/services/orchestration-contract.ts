@@ -1,5 +1,5 @@
 export type DeliveryContractFailureReason =
-  | "missing_agent_thread_update"
+  | "missing_in_progress_update"
   | "missing_terminal_status_update";
 
 export type StructuredRunStatus = "started" | "in_progress" | "completed";
@@ -32,13 +32,10 @@ export function evaluateRunDeliveryContract(params: {
     return event.runStatus != null;
   });
 
-  /** Orchestrator seeds `started`; contract requires at least one agent-originated in_progress or completed update. */
-  const meaningfulOwnerUpdates = ownerScoped.filter(
-    (event) => event.runStatus === "in_progress" || event.runStatus === "completed"
-  );
-
-  if (meaningfulOwnerUpdates.length === 0) {
-    return { passed: false, reason: "missing_agent_thread_update" };
+  /** Orchestrator seeds `started`; agents must still post `in_progress` and terminal `completed` for this run. */
+  const hasInProgress = ownerScoped.some((event) => event.runStatus === "in_progress");
+  if (!hasInProgress) {
+    return { passed: false, reason: "missing_in_progress_update" };
   }
 
   if (params.requireTerminalStatus) {

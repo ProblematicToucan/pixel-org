@@ -179,7 +179,7 @@ If failing any check, return actionable revisions.
 
 Use structured \`pixel_post_message\` fields (not ad-hoc status labels):
 
-- \`status\`: \`started\` | \`in_progress\` | \`completed\` (required in orchestrated runs)
+- \`status\`: \`started\` | \`in_progress\` | \`completed\` (required in orchestrated runs; post at least one \`in_progress\` and then \`completed\` for the same run — the orchestrator may seed \`started\`)
 - \`objective\`: one line
 - \`actions\`: short bullets (optional)
 - \`reason\`: blockers, decisions, or evidence pointers (optional)

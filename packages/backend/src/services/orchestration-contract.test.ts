@@ -16,7 +16,7 @@ function event(status: StructuredRunEvent["runStatus"]): StructuredRunEvent {
   };
 }
 
-test("fails when owner agent has no structured event in run", () => {
+test("fails when owner agent has no in_progress for run", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [],
@@ -27,11 +27,11 @@ test("fails when owner agent has no structured event in run", () => {
   assert.equal(result.passed, false);
   assert.equal(
     (result as { reason: DeliveryContractFailureReason }).reason,
-    "missing_agent_thread_update"
+    "missing_in_progress_update"
   );
 });
 
-test("fails when terminal status is required but only non-terminal updates exist", () => {
+test("fails when terminal status is required but only in_progress exists", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [event("started"), event("in_progress")],
@@ -46,7 +46,7 @@ test("fails when terminal status is required but only non-terminal updates exist
   );
 });
 
-test("fails when only orchestrator-seeded started exists (no in_progress or completed from agent)", () => {
+test("fails when only orchestrator-seeded started exists", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [event("started")],
@@ -57,11 +57,26 @@ test("fails when only orchestrator-seeded started exists (no in_progress or comp
   assert.equal(result.passed, false);
   assert.equal(
     (result as { reason: DeliveryContractFailureReason }).reason,
-    "missing_agent_thread_update"
+    "missing_in_progress_update"
   );
 });
 
-test("passes when run has owner update and completed terminal status", () => {
+test("fails when only completed without in_progress", () => {
+  const result = evaluateRunDeliveryContract({
+    runId: "run-1",
+    runEvents: [event("completed")],
+    ownerAgentId: "agent-1",
+    requireTerminalStatus: true,
+  });
+
+  assert.equal(result.passed, false);
+  assert.equal(
+    (result as { reason: DeliveryContractFailureReason }).reason,
+    "missing_in_progress_update"
+  );
+});
+
+test("passes when run has in_progress and completed", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [event("started"), event("in_progress"), event("completed")],
@@ -72,10 +87,10 @@ test("passes when run has owner update and completed terminal status", () => {
   assert.deepEqual(result, { passed: true });
 });
 
-test("passes with only completed when no-op path (no started/in_progress)", () => {
+test("passes with in_progress and completed when no started row", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
-    runEvents: [event("completed")],
+    runEvents: [event("in_progress"), event("completed")],
     ownerAgentId: "agent-1",
     requireTerminalStatus: true,
   });
@@ -87,8 +102,9 @@ test("ignores events from other runs and agents", () => {
   const result = evaluateRunDeliveryContract({
     runId: "run-1",
     runEvents: [
-      { ...event("completed"), runId: "run-2" },
+      { ...event("in_progress"), runId: "run-2" },
       { ...event("completed"), agentId: "agent-2" },
+      event("in_progress"),
       event("completed"),
     ],
     ownerAgentId: "agent-1",

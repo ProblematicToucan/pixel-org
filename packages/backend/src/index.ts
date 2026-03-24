@@ -1188,6 +1188,26 @@ app.post(
       }
       // Canonicalize agent-authored messages to authoritative registry identity.
       normalizedActorName = resolvedAgent.name;
+      if (normalizedRunId) {
+        const [activeRun] = await db
+          .select({ id: agentRunRequests.id })
+          .from(agentRunRequests)
+          .where(
+            and(
+              eq(agentRunRequests.id, normalizedRunId),
+              eq(agentRunRequests.threadId, threadId),
+              eq(agentRunRequests.agentId, normalizedAgentId),
+              eq(agentRunRequests.status, "running")
+            )
+          )
+          .limit(1);
+        if (!activeRun) {
+          res.status(400).json({
+            error: "runId must refer to an active orchestration run for this thread and agent",
+          });
+          return;
+        }
+      }
     } else if (!normalizedActorName) {
       normalizedActorName = "Board of Directors";
     }
