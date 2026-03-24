@@ -1161,7 +1161,6 @@ app.post(
         res.status(400).json({ error: "agentId must refer to a registered agent" });
         return;
       }
-      // Canonicalize agent-authored messages to authoritative registry identity.
       normalizedActorName = resolvedAgent.name;
     } else if (!normalizedActorName) {
       normalizedActorName = "Board of Directors";

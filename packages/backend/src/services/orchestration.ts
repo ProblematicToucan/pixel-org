@@ -47,15 +47,15 @@ function buildOrchestrationAgentTask(params: {
           "Run protocol:",
           "- Call pixel_get_context first.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- Do the work, then post a final result message via pixel_post_message summarizing what you did and the outcome.",
+          "- If no actionable work exists, post a message noting 'No actionable task found in this cycle'.",
         ]
       : [
           "Run protocol:",
           "- You are continuing a headless agent CLI session for this thread. Prefer context already in this session; call pixel_get_context only when you need to refresh backend state (e.g. new messages from others, or a new run reason). Use targeted MCP reads when a partial update is enough.",
           "- Check projects/threads/messages in Pixel MCP to find work assigned to you.",
-          "- If no actionable work exists, post only 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'Status: In Progress' first on a no-op).",
-          "- If actionable work exists, post 'Status: In Progress', do the work, then post 'Status: Completed' or 'Status: Blocked'.",
+          "- Do the work, then post a final result message via pixel_post_message summarizing what you did and the outcome.",
+          "- If no actionable work exists, post a message noting 'No actionable task found in this cycle'.",
         ];
 
   const leadIn =
@@ -76,7 +76,7 @@ function buildOrchestrationAgentTask(params: {
           `- Use pixel_list_approval_requests with as=approver and status=pending, or resolve this ID directly.`,
           `- Read pixel_list_messages on this thread for full context.`,
           `- Call pixel_resolve_approval_request with approvalRequestId, decision (approved or rejected), and resolutionNote.`,
-          `- After resolving, post a short pixel_post_message on this same thread summarizing the decision for the audit trail (Status: Completed).`,
+          `- After resolving, post via pixel_post_message on this thread summarizing the decision for the audit trail.`,
         ]
       : params.reason === "approval_pending"
         ? [
@@ -95,9 +95,8 @@ function buildOrchestrationAgentTask(params: {
     `Model policy: ${params.model}.`,
     ...runProtocolLines,
     ...approvalBlock,
-    "You MUST post at least one message to this exact thread using pixel_post_message.",
-    "If actionable work exists: first post 'Status: In Progress' with your immediate plan, then end with 'Status: Completed' or 'Status: Blocked' when done.",
-    "If there is no actionable work: post a single 'Status: Completed' with 'No actionable task found in this cycle' (do not post 'In Progress' first).",
+    "You MUST post at least one message to this exact thread using pixel_post_message with your final result before exiting.",
+    "When you need to change the thread work-item state, call pixel_set_thread_status explicitly.",
     params.reason === "kickoff_created"
       ? "Read project goals and react in the kickoff thread with an actionable leadership response."
       : params.reason === "approval_pending"
@@ -522,6 +521,8 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
         resumeSessionId: sessionId,
         env: {
           PIXEL_RUN_REASON: request.reason,
+          PIXEL_RUN_REQUEST_ID: request.id,
+          PIXEL_ORCHESTRATED_RUN: "1",
           PIXEL_PROJECT_ID: request.projectId,
           PIXEL_PROJECT_WORKSPACE: projectDir,
           PIXEL_PROJECT_ARTIFACTS: artifactsDir,
@@ -561,11 +562,15 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       break;
     }
 
+    const msgsAfterRun = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
+    const completionStatus = result.success ? "done" : "failed";
+    const completionError = completionStatus === "done" ? null : (result.stderr || "Agent run failed");
+
     const completionUpdate = await db
       .update(agentRunRequests)
       .set({
-        status: result.success ? "done" : "failed",
-        error: result.success ? null : (result.stderr || "Agent run failed"),
+        status: completionStatus,
+        error: completionError,
         pid: result.pid ?? null,
         command: result.command ?? null,
         args: result.args ? JSON.stringify(result.args) : null,
@@ -580,8 +585,7 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       .returning();
 
     if (completionUpdate.length > 0) {
-      const msgs = await db.select().from(messages).where(eq(messages.threadId, request.threadId));
-      const agentMessageCount = msgs.filter((m) => m.agentId === agent.id).length;
+      const agentMessageCount = msgsAfterRun.filter((m) => m.agentId === agent.id).length;
       const hasAgentReply = agentMessageCount > baselineAgentMessageCount + 1;
       if (!hasAgentReply) {
         const obj = fallbackObjectiveForRunReason(request.reason);
@@ -589,15 +593,15 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
           ? [
               "Status: Completed",
               `Objective: ${obj}`,
-              "Actions:",
-              "- CLI run completed but no thread update was posted by agent.",
-              "- Added fallback update for audit continuity.",
-              "Next: Re-run with stricter prompt or inspect run stdout/stderr in thread runs endpoint.",
+              `Reason: Run completed but agent did not post a final result message.`,
+              "Outcome: No result",
+              "Next: Investigate agent output or MCP connectivity.",
             ].join("\n")
           : [
-              "Status: Blocked",
+              "Status: Completed",
               `Objective: ${obj}`,
               `Reason: Agent CLI run failed (exit=${result.exitCode}${result.timedOut ? ", timed out" : ""}).`,
+              "Outcome: Failed",
               formatAgentCliFailureForThread(result.stderr, result.exitCode),
             ].join("\n");
         await db.insert(messages).values({
@@ -631,9 +635,10 @@ async function runQueuedRequest(requestId: string, claimedAgentId?: string): Pro
       actorType: "agent",
       actorName: agent.name,
       content: [
-        "Status: Blocked",
+        "Status: Completed",
         `Objective: ${fallbackObjectiveForRunReason(request.reason)}`,
         `Reason: Orchestration error while launching agent CLI.`,
+        "Outcome: Failed",
         `Detail: ${errMsg}`,
       ].join("\n"),
     });
@@ -795,7 +800,7 @@ function computeNextAwakeAt(now: Date, intervalMinutes: number): Date {
 
 function isTerminalStatus(content: string): boolean {
   const normalized = content.trim().toLowerCase();
-  return normalized.startsWith("status: completed") || normalized.startsWith("status: blocked");
+  return normalized.startsWith("status: completed");
 }
 
 async function hasTerminalAgentMessageSinceStart(request: typeof agentRunRequests.$inferSelect): Promise<boolean> {
